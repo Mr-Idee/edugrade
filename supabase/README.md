@@ -24,6 +24,11 @@ available teacher-upload files; re-encrypts the vault using
 only and never writes secrets into source files. Missing legacy upload files
 are omitted from the imported snapshot.
 
+Run `npm run db:check` after applying the migration to verify table access,
+the state-write function, an isolated temporary database write, and the private
+document bucket. The check removes its temporary row and does not change school
+records.
+
 The cloud API is implemented in `api/app.ts`; it does not use a MySQL server.
 The MySQL connection is required only while `npm run db:import` reads the
 legacy database. Only the canonical snapshot and associated cloud runtime

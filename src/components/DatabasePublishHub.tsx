@@ -50,7 +50,6 @@ export const DatabasePublishHub: React.FC = () => {
     promotionLogs,
     backendStatus,
     initializeMysqlDatabase,
-    updateMysqlConfig,
     downloadPhpMyAdminSql
   } = useApp();
 
@@ -247,20 +246,6 @@ export const DatabasePublishHub: React.FC = () => {
     setTimeout(() => setInitFeedback(null), 6000);
   };
 
-  const handleSaveMysqlCredentials = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = await updateMysqlConfig({
-      host: dbHostInput.trim() || '127.0.0.1',
-      port: Number(dbPortInput) || 3306,
-      user: dbUserInput.trim() || 'root',
-      password: emptyPasswordChecked ? '' : dbPasswordInput,
-      emptyPassword: emptyPasswordChecked,
-      database: dbNameInput.trim() || 'edugrade_db'
-    });
-    setInitFeedback(res);
-    setTimeout(() => setInitFeedback(null), 6000);
-  };
-
   const envFileSnippet = `PORT=3000
 NODE_ENV=development
 DB_HOST=${dbHostInput || '127.0.0.1'}
@@ -293,17 +278,17 @@ npm start`;
               </span>
               <span
                 className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold border ${
-                  backendStatus.mysqlConnected
+                  backendStatus.databaseConnected
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                 }`}
               >
                 <Database className="w-3.5 h-3.5" />
                 <span>
-                  {backendStatus.mysqlConnected
-                    ? `MySQL Connected (${backendStatus.dbHost}:${backendStatus.dbPort}/${backendStatus.dbName})`
+                  {backendStatus.databaseConnected
+                    ? 'Supabase PostgreSQL Connected'
                     : backendStatus.nodeConnected
-                      ? `MySQL Disconnected (${backendStatus.dbHost}:${backendStatus.dbPort}/${backendStatus.dbName})`
+                      ? 'Supabase PostgreSQL Disconnected'
                       : 'Database Backend Unavailable'}
                 </span>
               </span>
@@ -315,20 +300,20 @@ npm start`;
             </div>
 
             <h3 className="text-lg font-black tracking-tight text-white">
-              MySQL (phpMyAdmin) Backend Database &amp; VS Code Publishing Center
+              Supabase PostgreSQL Database &amp; Deployment Center
             </h3>
             {backendStatus.statusMessage && (
               <p
                 role="status"
                 className={`text-xs max-w-3xl leading-relaxed ${
-                  backendStatus.mysqlConnected ? 'text-emerald-300' : 'text-amber-200'
+                  backendStatus.databaseConnected ? 'text-emerald-300' : 'text-amber-200'
                 }`}
               >
                 {backendStatus.statusMessage}
               </p>
             )}
             <p className="text-xs text-slate-300 max-w-3xl leading-relaxed">
-              Your application runs on a full-stack <strong className="text-white">Node.js + Express + MySQL2</strong> server (<code className="text-amber-300">server.ts</code>). Score entries, student updates, and school settings are saved to the live MySQL database when connected, with a local server backup and <code className="text-amber-300">database/edugrade_phpmyadmin.sql</code> export as fallback.
+              The application reads and writes its canonical school snapshot through the server-side API to <strong className="text-white">Supabase PostgreSQL</strong>. Configure the Supabase project URL and server-only secret in the hosting environment; database credentials are never entered in the browser.
             </p>
           </div>
 
@@ -350,7 +335,7 @@ npm start`;
             >
               <RefreshCw className={`w-4 h-4 ${backendStatus.isSyncing ? 'animate-spin' : ''}`} />
               <span>
-                {backendStatus.isSyncing ? 'Syncing MySQL...' : 'Initialize & Sync MySQL Tables'}
+                {backendStatus.isSyncing ? 'Saving to Supabase...' : 'Save Current School Data to Supabase'}
               </span>
             </button>
           </div>
@@ -530,115 +515,15 @@ npm start`;
         </div>
       </div>
 
-      {/* MySQL / phpMyAdmin Connection Credentials Configurator (Empty Password Ready) */}
-      <form
-        onSubmit={handleSaveMysqlCredentials}
-        className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
-              <KeyRound className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-sm font-black text-slate-900">
-                MySQL / phpMyAdmin Connection Settings (Empty Password Active)
-              </h4>
-              <p className="text-xs text-slate-500">
-                Pre-configured for standard local phpMyAdmin (<code className="bg-slate-100 px-1 py-0.5 rounded">root</code> user with <strong>NO password / empty password</strong>). If your phpMyAdmin database is empty, Node.js automatically creates all 15 tables and populates your school records.
-              </p>
-            </div>
-          </div>
-          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-            Password: {emptyPasswordChecked ? 'EMPTY ("") — No Password' : 'Custom Password'}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 items-end">
-          <div>
-            <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1">MySQL Host</label>
-            <input
-              type="text"
-              value={dbHostInput}
-              onChange={e => setDbHostInput(e.target.value)}
-              placeholder="127.0.0.1"
-              className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-indigo-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1">Port</label>
-            <input
-              type="number"
-              value={dbPortInput}
-              onChange={e => setDbPortInput(e.target.value)}
-              placeholder="3306"
-              className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-indigo-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1">MySQL Username</label>
-            <input
-              type="text"
-              value={dbUserInput}
-              onChange={e => setDbUserInput(e.target.value)}
-              placeholder="root"
-              className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-indigo-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold uppercase text-slate-600 mb-1">Database Name</label>
-            <input
-              type="text"
-              value={dbNameInput}
-              onChange={e => setDbNameInput(e.target.value)}
-              placeholder="edugrade_db"
-              className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:border-indigo-600"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-[11px] font-bold uppercase text-slate-600">Password</label>
-              <label className="inline-flex items-center space-x-1 text-[11px] font-bold text-emerald-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={emptyPasswordChecked}
-                  onChange={e => {
-                    setEmptyPasswordChecked(e.target.checked);
-                    if (e.target.checked) setDbPasswordInput('');
-                  }}
-                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                />
-                <span>No Password (Empty)</span>
-              </label>
-            </div>
-            <input
-              type="password"
-              disabled={emptyPasswordChecked}
-              value={emptyPasswordChecked ? '' : dbPasswordInput}
-              onChange={e => setDbPasswordInput(e.target.value)}
-              placeholder={emptyPasswordChecked ? 'Empty (No password required)' : 'Enter MySQL password'}
-              className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg disabled:bg-emerald-50/60 disabled:text-emerald-800 disabled:border-emerald-200 focus:outline-none focus:border-indigo-600"
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-          <p className="text-[11px] text-slate-500">
-            <strong>Empty Database in phpMyAdmin?</strong> Leave <em>No Password (Empty)</em> checked and click <strong>Save &amp; Populate Empty Database</strong> (or import <code className="bg-slate-100 px-1 py-0.5 rounded">database/edugrade_phpmyadmin.sql</code> in phpMyAdmin) to create all 15 tables automatically.
-          </p>
-          <button
-            type="submit"
-            disabled={backendStatus.isSyncing}
-            className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white text-xs font-bold transition-colors cursor-pointer"
-          >
-            {backendStatus.isSyncing ? 'Applying & Syncing...' : 'Save & Populate Empty Database'}
-          </button>
-        </div>
-      </form>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs">
+        <h4 className="text-sm font-black text-slate-900">Supabase connection</h4>
+        <p className="mt-1 text-xs leading-relaxed text-slate-600">
+          The API uses the server-only Supabase secret to read and write school state. Apply the
+          checked-in migration and configure <code>SUPABASE_URL</code>, <code>SUPABASE_SECRET_KEY</code>,
+          <code> AUTH_VAULT_ENCRYPTION_KEY</code>, and <code>SESSION_SECRET</code> in your host settings.
+          Use <code>npm run db:check</code> to verify the schema and database access without changing school records.
+        </p>
+      </section>
 
       {/* Local Network (LAN) & WAMP Custom Domain Sharing Configurator (network.config.json) */}
       <form

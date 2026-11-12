@@ -570,7 +570,7 @@ app.get('/api/db/status', async (_request, response) => {
     response.json({
       ok: true,
       nodeVersion: process.version,
-      mysqlConnected: true,
+      databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
       dbConfig: { database: 'Supabase PostgreSQL', user: 'service_role', hasPassword: true },
       lastSyncedAt: row?.updated_at || null,
@@ -867,7 +867,7 @@ app.get('/api/state', async (request: AuthenticatedRequest, response, next) => {
     response.json({
       ok: true,
       hasPersistedState: Boolean(row),
-      mysqlConnected: true,
+      databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
       stateRevision: row?.state_revision || null,
       state: row ? filterSnapshotForStaff(row.state_json, request.auth!) : null
@@ -906,10 +906,10 @@ app.post('/api/state', async (request: AuthenticatedRequest, response, next) => 
     const saved = await saveState(snapshot, current?.state_revision || null);
     response.json({
       ok: true,
-      mysqlConnected: true,
+      databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
       savedToNodeDisk: false,
-      savedToMySql: true,
+      savedToDatabase: true,
       stateRevision: saved.stateRevision,
       syncedAt: saved.updatedAt
     });
@@ -967,7 +967,7 @@ app.post('/api/state/offline-commit', async (request: AuthenticatedRequest, resp
       state: filterSnapshotForStaff(merged, request.auth!),
       stateRevision: saved.stateRevision,
       savedToNodeDisk: false,
-      savedToMySql: true,
+      savedToDatabase: true,
       conflicts: []
     });
   } catch (error) {
@@ -988,13 +988,13 @@ app.post('/api/db/init', async (request: AuthenticatedRequest, response, next) =
     const saved = await saveState(normalizeEnrollmentIds(submitted), current?.state_revision || null);
     response.json({
       ok: true,
-      mysqlConnected: true,
+      databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
-      savedToMySql: true,
+      savedToDatabase: true,
       savedToNodeDisk: false,
       state: submitted,
       stateRevision: saved.stateRevision,
-      tablesCreated: ['app_state_store', 'offline_commit_archive', 'auth_vault', 'system_backups'],
+      tablesVerified: ['app_state_store'],
       message: 'School records are stored in Supabase PostgreSQL.'
     });
   } catch (error) {

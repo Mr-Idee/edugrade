@@ -122,7 +122,7 @@ import { uploadDocumentToCloud } from '../utils/cloudDocumentStorage';
 
 export interface BackendDatabaseStatus {
   nodeConnected: boolean;
-  mysqlConnected: boolean;
+  databaseConnected: boolean;
   storageMode: 'MYSQL_LIVE' | 'SUPABASE_LIVE' | 'LOCAL_NODE_FALLBACK' | 'BROWSER_ONLY';
   dbHost: string;
   dbPort: number;
@@ -384,7 +384,7 @@ interface AppContextType {
     resolutions?: Record<string, OfflineConflictResolution>
   ) => Promise<{ ok: boolean; message: string; conflicts?: OfflineConflict[] }>;
   syncToBackend: () => Promise<{
-    savedToMySql: boolean;
+    savedToDatabase: boolean;
     savedToNodeDisk: boolean;
     message: string;
   }>;
@@ -1249,7 +1249,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Persistent backend status
   const [backendStatus, setBackendStatus] = useState<BackendDatabaseStatus>({
     nodeConnected: false,
-    mysqlConnected: false,
+    databaseConnected: false,
     storageMode: 'BROWSER_ONLY',
     dbHost: '127.0.0.1',
     dbPort: 3306,
@@ -3738,7 +3738,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setBackendStatus(previous => ({
             ...previous,
             nodeConnected: true,
-            mysqlConnected: false,
+            databaseConnected: false,
             storageMode: 'SUPABASE_LIVE',
             statusMessage: 'Sign in with your staff password to load protected Supabase records.'
           }));
@@ -3762,12 +3762,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const statusRes = await fetch('/api/db/status');
         const statusData = statusRes.ok ? await statusRes.json() : null;
         if (cancelled) return;
-        const mysqlConnected = Boolean(statusData?.mysqlConnected ?? stateData.mysqlConnected);
+        const databaseConnected = Boolean(statusData?.databaseConnected ?? stateData.databaseConnected);
 
         setBackendStatus(prev => ({
           ...prev,
           nodeConnected: true,
-          mysqlConnected,
+          databaseConnected,
           storageMode: statusData?.storageMode || stateData.storageMode || 'LOCAL_NODE_FALLBACK',
           dbHost: statusData?.dbConfig?.host || prev.dbHost,
           dbPort: statusData?.dbConfig?.port || prev.dbPort,
@@ -3776,7 +3776,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           hasPassword: Boolean(statusData?.dbConfig?.hasPassword),
           nodeVersion: statusData?.nodeVersion || prev.nodeVersion,
           sqlDumpSizeKb: statusData?.sqlDumpFile?.sizeKb || prev.sqlDumpSizeKb,
-          statusMessage: mysqlConnected
+          statusMessage: databaseConnected
             ? snapshot
               ? 'Loaded persisted student and score records from backend storage'
               : 'Connected to Supabase; no saved records found yet'
@@ -3801,7 +3801,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setBackendStatus(prev => ({
           ...prev,
           nodeConnected: false,
-          mysqlConnected: false,
+          databaseConnected: false,
           statusMessage: `Could not load persisted records; automatic database writes are paused to protect existing data. ${error instanceof Error ? error.message : String(error)}`
         }));
       }
@@ -4153,13 +4153,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Sync current snapshot to Node.js + MySQL backend
   const syncToBackend = useCallback(async (): Promise<{
-    savedToMySql: boolean;
+    savedToDatabase: boolean;
     savedToNodeDisk: boolean;
     message: string;
   }> => {
     if (!backendHydrated) {
       return {
-        savedToMySql: false,
+        savedToDatabase: false,
         savedToNodeDisk: false,
         message: 'Database save is waiting for persisted school records to finish loading.'
       };
@@ -4170,12 +4170,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await persistOfflineSnapshot(snapshot);
         const message = 'Pending offline changes are saved on this device. Review and commit them to the database.';
         setOfflineSyncMessage(message);
-        return { savedToMySql: false, savedToNodeDisk: false, message };
+        return { savedToDatabase: false, savedToNodeDisk: false, message };
       } catch (error) {
         const message = `Could not preserve pending changes in offline storage: ${error instanceof Error ? error.message : String(error)}`;
         setOfflineSyncMessage(message);
         setBackendStatus(previous => ({ ...previous, isSyncing: false, statusMessage: message }));
-        return { savedToMySql: false, savedToNodeDisk: false, message };
+        return { savedToDatabase: false, savedToNodeDisk: false, message };
       }
     }
     setBackendStatus(prev => ({ ...prev, isSyncing: true }));
@@ -4190,14 +4190,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       if (res.ok) {
         const data = await res.json();
-        const savedToMySql = Boolean(data.savedToMySql);
+        const savedToDatabase = Boolean(data.savedToDatabase);
         const savedToNodeDisk = Boolean(data.savedToNodeDisk);
-        const message = savedToMySql
+        const message = savedToDatabase
           ? 'Synced to Supabase PostgreSQL'
           : data.errorMessage || (savedToNodeDisk
-              ? 'MySQL is unavailable; changes are saved locally and queued for database commit'
+              ? 'The database is unavailable; changes are saved locally and queued for commit'
               : 'Persistence failed; changes have not been saved to the server');
-        if (savedToMySql) {
+        if (savedToDatabase) {
           backendBaseSnapshotRef.current = snapshot;
           backendRevisionRef.current = data.stateRevision || null;
         } else {
@@ -4211,14 +4211,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setBackendStatus(prev => ({
           ...prev,
           nodeConnected: true,
-          mysqlConnected: savedToMySql && Boolean(data.mysqlConnected),
+          databaseConnected: savedToDatabase && Boolean(data.databaseConnected),
           storageMode: data.storageMode || prev.storageMode,
-          lastSyncedAt: savedToMySql ? new Date().toLocaleTimeString() : prev.lastSyncedAt,
+          lastSyncedAt: savedToDatabase ? new Date().toLocaleTimeString() : prev.lastSyncedAt,
           isSyncing: false,
           statusMessage: message
         }));
         return {
-          savedToMySql,
+          savedToDatabase,
           savedToNodeDisk,
           message
         };
@@ -4238,7 +4238,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           statusMessage: message
         }));
         return {
-          savedToMySql: false,
+          savedToDatabase: false,
           savedToNodeDisk: false,
           message
         };
@@ -4259,7 +4259,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         statusMessage: message
       }));
       return {
-        savedToMySql: false,
+        savedToDatabase: false,
         savedToNodeDisk: false,
         message
       };
@@ -4363,7 +4363,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         error?: string;
         state?: FullDatabaseSnapshot;
         savedToNodeDisk?: boolean;
-        savedToMySql?: boolean;
+        savedToDatabase?: boolean;
         stateRevision?: string | null;
         conflicts?: OfflineConflict[];
         message?: string;
@@ -4416,16 +4416,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setOfflineConflicts([]);
       const message = remainingQueue
         ? 'Committed changes were saved to MySQL. Newer edits remain queued for a later commit.'
-        : result.savedToMySql
+        : result.savedToDatabase
         ? 'Offline changes and queued documents were committed to MySQL and server storage.'
         : 'Offline changes and queued documents were committed to server storage; MySQL is not currently connected.';
       setOfflineSyncMessage(message);
       setBackendStatus(previous => ({
         ...previous,
         nodeConnected: Boolean(result.savedToNodeDisk),
-        mysqlConnected: Boolean(result.savedToMySql),
+        databaseConnected: Boolean(result.savedToDatabase),
         isSyncing: false,
-        lastSyncedAt: result.savedToMySql ? new Date().toLocaleTimeString() : previous.lastSyncedAt,
+        lastSyncedAt: result.savedToDatabase ? new Date().toLocaleTimeString() : previous.lastSyncedAt,
         statusMessage: message
       }));
       return { ok: true, message };
@@ -4521,7 +4521,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setBackendStatus(prev => ({
         ...prev,
         nodeConnected: true,
-        mysqlConnected: Boolean(data.mysqlConnected && data.savedToMySql),
+        databaseConnected: Boolean(data.databaseConnected && data.savedToDatabase),
         storageMode: data.storageMode || 'LOCAL_NODE_FALLBACK',
         dbHost: statusData?.dbConfig?.host || prev.dbHost,
         dbPort: statusData?.dbConfig?.port || prev.dbPort,
@@ -4530,19 +4530,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         hasPassword: Boolean(statusData?.dbConfig?.hasPassword),
         nodeVersion: statusData?.nodeVersion || prev.nodeVersion,
         sqlDumpSizeKb: statusData?.sqlDumpFile?.sizeKb || prev.sqlDumpSizeKb,
-        lastSyncedAt: data.savedToMySql ? new Date().toLocaleTimeString() : prev.lastSyncedAt,
+        lastSyncedAt: data.savedToDatabase ? new Date().toLocaleTimeString() : prev.lastSyncedAt,
         isSyncing: false,
-        statusMessage: data.savedToMySql
+        statusMessage: data.savedToDatabase
           ? data.message
           : data.errorMessage || statusData?.errorMessage || data.message
       }));
 
       return {
-        ok: Boolean(data.mysqlConnected && data.savedToMySql),
-        message: data.savedToMySql
+        ok: Boolean(data.databaseConnected && data.savedToDatabase),
+        message: data.savedToDatabase
           ? data.message
           : data.errorMessage || statusData?.errorMessage || data.message,
-        tablesCount: Array.isArray(data.tablesCreated) ? data.tablesCreated.length : undefined
+        tablesCount: Array.isArray(data.tablesVerified) ? data.tablesVerified.length : undefined
       };
     } catch (err: any) {
       setBackendStatus(prev => ({ ...prev, isSyncing: false }));

@@ -127,7 +127,7 @@ export const OfflineChangesNotice: React.FC = () => {
                 <div className="rounded-xl bg-slate-50 p-3">
                   <div className="text-[10px] font-black uppercase text-slate-500">Database</div>
                   <div className="mt-1 text-xs font-bold text-slate-900">
-                    {backendStatus.mysqlConnected ? 'Connected' : 'Not confirmed connected'}
+                    {backendStatus.databaseConnected ? 'Connected' : 'Not confirmed connected'}
                   </div>
                 </div>
               </div>

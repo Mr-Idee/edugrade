@@ -7,6 +7,7 @@
     "dev": "tsx api/dev.ts",
     "start": "tsx api/dev.ts",
     "db:import": "tsx scripts/import-mysql-to-supabase.ts",
+    "db:check": "tsx scripts/check-supabase.ts",
     "build": "vite build",
     "preview": "vite preview",
     "test": "tsx --test src/utils/*.test.ts",

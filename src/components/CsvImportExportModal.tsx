@@ -93,17 +93,17 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
       const scoreErrorSummary = pendingImportSave.scoreErrors.length > 0
         ? ` ${pendingImportSave.scoreErrors.length} score(s) were rejected: ${pendingImportSave.scoreErrors.slice(0, 3).join('; ')}${pendingImportSave.scoreErrors.length > 3 ? `; and ${pendingImportSave.scoreErrors.length - 3} more` : ''}.`
         : '';
-      const saveSummary = result.savedToMySql
-        ? `Saved ${pendingImportSave.savedScoreCount} score(s) to MySQL and local backup files.`
+      const saveSummary = result.savedToDatabase
+        ? `Saved ${pendingImportSave.savedScoreCount} score(s) to Supabase PostgreSQL.`
         : `Database save failed: ${result.message}${result.savedToNodeDisk ? ' The local backup file was saved.' : ''}`;
 
       setIsImportSaving(false);
-      setHasDatabaseSaveError(!result.savedToMySql);
-      setHasImportErrors(!result.savedToMySql || pendingImportSave.scoreErrors.length > 0);
+      setHasDatabaseSaveError(!result.savedToDatabase);
+      setHasImportErrors(!result.savedToDatabase || pendingImportSave.scoreErrors.length > 0);
       setImportNotice(`${pendingImportSave.studentSummary} ${saveSummary}${scoreErrorSummary}`);
       setPendingImportSave(null);
 
-      if (result.savedToMySql && pendingImportSave.scoreErrors.length === 0) {
+      if (result.savedToDatabase && pendingImportSave.scoreErrors.length === 0) {
         setTimeout(() => onCloseRef.current(), 1500);
       }
     });
