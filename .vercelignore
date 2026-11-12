@@ -1,0 +1,12 @@
+.env
+.env.*
+database/
+.aistudio/
+dist/
+coverage/
+node_modules/
+*.key
+*.enc
+*.log
+/*.png
+/*.jpg

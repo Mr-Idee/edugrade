@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "🚀 Launch Node.js + MySQL Server (server.ts)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "server.ts"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "restart": true,
+      "InternalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "🌐 Open App in Chrome (http://localhost:3000)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}/src"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full-Stack Debug (Node.js + Chrome)",
+      "configurations": [
+        "🚀 Launch Node.js + MySQL Server (server.ts)",
+        "🌐 Open App in Chrome (http://localhost:3000)"
+      ]
+    }
+  ]
+}

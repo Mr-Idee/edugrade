@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <defs>
+    <linearGradient id="defaultShieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="55%" stop-color="#334155"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="defaultGoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fde047"/>
+      <stop offset="50%" stop-color="#eab308"/>
+      <stop offset="100%" stop-color="#ca8a04"/>
+    </linearGradient>
+  </defs>
+  <!-- Outer Academic Emblem Ring -->
+  <circle cx="120" cy="120" r="112" fill="#ffffff" stroke="url(#defaultGoldGrad)" stroke-width="6"/>
+  <circle cx="120" cy="120" r="102" fill="none" stroke="#1e293b" stroke-width="2" stroke-dasharray="4 3"/>
+  <!-- Shield Body -->
+  <path d="M58 46 H182 V118 C182 162 120 194 120 194 C120 194 58 162 58 118 Z" fill="url(#defaultShieldGrad)" stroke="url(#defaultGoldGrad)" stroke-width="5" stroke-linejoin="round"/>
+  <!-- Shield Quadrant Cross -->
+  <path d="M120 48 V190 M60 112 H180" stroke="url(#defaultGoldGrad)" stroke-width="3" opacity="0.85"/>
+  <!-- Open Book of Knowledge (Top Center) -->
+  <path d="M92 66 Q106 60 120 68 Q134 60 148 66 V92 Q134 86 120 94 Q106 86 92 92 Z" fill="#ffffff" stroke="#eab308" stroke-width="2"/>
+  <line x1="120" y1="68" x2="120" y2="94" stroke="#1e293b" stroke-width="2"/>
+  <!-- Academic Star of Excellence (Bottom Center) -->
+  <polygon points="120,124 126,138 141,138 129,147 134,161 120,152 106,161 111,147 99,138 114,138" fill="url(#defaultGoldGrad)"/>
+  <!-- Scroll Banner -->
+  <path d="M36 196 Q120 218 204 196 L196 218 Q120 238 44 218 Z" fill="#1e293b" stroke="url(#defaultGoldGrad)" stroke-width="2.5"/>
+  <text x="120" y="215" font-family="Georgia, serif" font-size="11.5" font-weight="bold" fill="#fef08a" text-anchor="middle" letter-spacing="1.2">ACADEMIC EXCELLENCE</text>
+</svg>

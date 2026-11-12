@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@layer base {
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 5mm;
+    }
+
+    body {
+      background: white !important;
+      color: black !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    /* Hide non-printable navigation, toolbar and modals */
+    .print\:hidden {
+      display: none !important;
+    }
+
+    /* Force each student report sheet onto its own separate printed page in batch mode */
+    .print-page-break {
+      break-after: page !important;
+      page-break-after: always !important;
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    [data-testid="printable-report-sheet"] {
+      zoom: 0.82;
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    [data-testid^="printable-report-sheet-"] {
+      zoom: 0.82;
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    /* Prevent awkward table row breaks */
+    tr, table, .print\:break-inside-avoid {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+  }
+}

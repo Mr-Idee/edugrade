@@ -1,0 +1,6 @@
+{
+  "name": "EduGrade - Continuous Assessment & Academic Report Card Platform",
+  "description": "Comprehensive school continuous assessment and academic report card management platform with dynamic CA weights, grade-based comment banks, role-based access, interactive score grids, and transcript printing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

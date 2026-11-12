@@ -1,0 +1,34 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Local database content and credentials must never be published.
+/database/
+/network.config.json
+*.key
+*.enc
+*.sql
+!supabase/migrations/*.sql
+
+# Legacy local installers and update packages are not part of the Vercel app.
+/apply_update_*.js
+/install.bat
+/install.cmd
+/install.sh
+/installer.js
+/server.ts
+/server.js
+/scripts/build_update_zip.ts
+/public/updates/
+/public/sheetDataList.json
+
+# Local diagnostics and captured screens may contain school or student data.
+/.aistudio/
+/public/assets/aistudio/
+/*.png
+/*.jpg
