@@ -19,7 +19,7 @@ built with React, TypeScript, Vercel serverless functions, and Supabase.
    and document storage without changing school records.
 5. Run `npm run lint`, `npm test`, and `npm run build`.
 6. Connect the Git repository to Vercel and deploy. The API is routed through
-   `api/[[...path]].ts`.
+   `api/[...path].ts`; the SPA fallback excludes `/api/*` requests.
 
 Generate separate encryption and session values with:
 
