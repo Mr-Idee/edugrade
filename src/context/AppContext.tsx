@@ -3754,9 +3754,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : localSnapshot;
         backendBaseSnapshotRef.current = persistedSnapshot;
         backendRevisionRef.current = stateData.stateRevision || null;
-        const snapshot = queuedChanges
-          ? reconcileExecutiveStaffSnapshot(queuedChanges.snapshot)
-          : persistedSnapshot;
+        const snapshot = persistedSnapshot || (
+          queuedChanges
+            ? reconcileExecutiveStaffSnapshot(queuedChanges.snapshot)
+            : null
+        );
         if (snapshot) applySnapshotToState(snapshot);
 
         const statusRes = await fetch('/api/db/status');
@@ -3783,7 +3785,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : statusData?.errorMessage || stateData.errorMessage || 'Supabase is unavailable; using local storage'
         }));
         if (queuedChanges) {
-          setOfflineSyncMessage('Pending offline changes were restored from this device. Review before committing them.');
+          setOfflineSyncMessage(
+            persistedSnapshot
+              ? 'Showing the current database records. Pending offline changes remain queued until you review and commit them.'
+              : 'Pending offline changes were restored from this device. Review before committing them.'
+          );
         }
         setBackendHydrated(true);
       } catch (error) {
