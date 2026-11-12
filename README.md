@@ -20,6 +20,8 @@ built with React, TypeScript, Vercel serverless functions, and Supabase.
 5. Run `npm run lint`, `npm test`, and `npm run build`.
 6. Connect the Git repository to Vercel and deploy. API requests are rewritten
    to a shared server handler; the SPA fallback excludes `/api/*` requests.
+   Vercel installs development dependencies for the build so the TypeScript
+   compiler and its configured type definitions are available.
 
 Generate separate encryption and session values with:
 
