@@ -18,8 +18,8 @@ built with React, TypeScript, Vercel serverless functions, and Supabase.
 4. Run `npm run db:check` to verify Supabase tables, state reads, write permissions,
    and document storage without changing school records.
 5. Run `npm run lint`, `npm test`, and `npm run build`.
-6. Connect the Git repository to Vercel and deploy. API route wrappers forward
-   requests to the shared handler; the SPA fallback excludes `/api/*` requests.
+6. Connect the Git repository to Vercel and deploy. API requests are rewritten
+   to a shared server handler; the SPA fallback excludes `/api/*` requests.
 
 Generate separate encryption and session values with:
 
