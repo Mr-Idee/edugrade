@@ -4,7 +4,7 @@ import {
   createPendingOfflineSnapshot,
   fetchOfflineCommitWithRetry,
   mergePendingOfflineSnapshot,
-  omitActiveSessionArchive,
+  omitSessionArchives,
   readJsonResponse,
   shouldQueueOfflineChanges
 } from './offlineSyncEngine.ts';
@@ -73,21 +73,18 @@ test('only offline and transient availability failures create an offline queue',
   assert.equal(shouldQueueOfflineChanges(true, null, new Error('Invalid snapshot')), false);
 });
 
-test('active session archives are omitted from persisted snapshots', () => {
-  const historicalArchive = { sessionId: 1 };
-  const activeArchive = { sessionId: 2 };
+test('session archives are omitted from persisted snapshots without mutating the local snapshot', () => {
+  const archives = [{ sessionId: 1 }, { sessionId: 2 }];
   const snapshot = {
-    sessions: [
-      { id: 1, isCurrent: false },
-      { id: 2, isCurrent: true }
-    ],
-    sessionArchives: [historicalArchive, activeArchive]
+    sessions: [{ id: 2, isCurrent: true }],
+    sessionArchives: archives
   };
 
-  const persisted = omitActiveSessionArchive(snapshot);
-  assert.deepEqual(persisted.sessionArchives, [historicalArchive]);
-  assert.deepEqual(snapshot.sessionArchives, [historicalArchive, activeArchive]);
-  assert.equal(omitActiveSessionArchive(persisted), persisted);
+  const persisted = omitSessionArchives(snapshot);
+  assert.equal('sessionArchives' in persisted, false);
+  assert.strictEqual(persisted.sessions, snapshot.sessions);
+  assert.deepEqual(snapshot.sessionArchives, archives);
+  assert.deepEqual(omitSessionArchives(persisted), persisted);
 });
 
 test('offline API responses report a useful error when the server returns HTML instead of JSON', async () => {

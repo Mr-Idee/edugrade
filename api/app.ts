@@ -7,6 +7,7 @@ import { ZipArchive } from 'archiver';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
   mergePendingOfflineSnapshot,
+  omitSessionArchives,
   type OfflineConflictResolution,
   type PendingOfflineSnapshot
 } from '../src/utils/offlineSyncEngine.ts';
@@ -349,16 +350,6 @@ function wrapSupabaseError(message: string, error: { message: string; code?: str
   return wrapped;
 }
 
-function omitActiveSessionArchive(snapshot: FullDatabaseSnapshot): FullDatabaseSnapshot {
-  const activeSession = snapshot.sessions.find(session => session.isCurrent);
-  if (!activeSession || !snapshot.sessionArchives) return snapshot;
-  const sessionArchives = snapshot.sessionArchives.filter(
-    archive => archive.sessionId !== activeSession.id
-  );
-  if (sessionArchives.length === snapshot.sessionArchives.length) return snapshot;
-  return { ...snapshot, sessionArchives };
-}
-
 async function loadState(): Promise<StateRow | null> {
   const supabase = getSupabase();
   const { data, error } = await supabase.rpc('load_app_state');
@@ -378,10 +369,19 @@ async function loadState(): Promise<StateRow | null> {
     if (fallback.error) {
       throw wrapSupabaseError('Could not load school records from Supabase', fallback.error);
     }
-    return fallback.data as StateRow | null;
+    if (!fallback.data) return null;
+    return {
+      ...fallback.data,
+      state_json: omitSessionArchives(fallback.data.state_json) as FullDatabaseSnapshot
+    } as StateRow;
   }
   const row = Array.isArray(data) ? data[0] : data;
-  return (row as StateRow | null) || null;
+  if (!row) return null;
+  const stateRow = row as StateRow;
+  return {
+    ...stateRow,
+    state_json: omitSessionArchives(stateRow.state_json) as FullDatabaseSnapshot
+  };
 }
 
 async function loadStateMetadata(): Promise<StateMetadata | null> {
@@ -526,7 +526,7 @@ async function saveState(
   expectedRevision: string | null
 ): Promise<{ stateRevision: string; updatedAt: string }> {
   const { data, error } = await getSupabase().rpc('save_app_state', {
-    p_state: omitActiveSessionArchive(snapshot),
+    p_state: omitSessionArchives(snapshot),
     p_expected_revision: expectedRevision
   });
   if (error) {
@@ -922,9 +922,7 @@ app.get('/api/state', async (request: AuthenticatedRequest, response, next) => {
       databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
       stateRevision: row?.state_revision || null,
-      state: row
-        ? omitActiveSessionArchive(filterSnapshotForStaff(row.state_json, request.auth!))
-        : null
+      state: row ? filterSnapshotForStaff(row.state_json, request.auth!) : null
     });
   } catch (error) {
     next(error);
@@ -1006,7 +1004,7 @@ app.post('/api/state/offline-commit', async (request: AuthenticatedRequest, resp
     }
     const merged = mergeScopedSnapshot(currentRow.state_json, merge.snapshot, request.auth!);
     const saved = await saveState(merged, currentRow.state_revision);
-    const persistedSnapshot = omitActiveSessionArchive(merged);
+    const persistedSnapshot = omitSessionArchives(merged) as FullDatabaseSnapshot;
     const commitId = String(body.commitId || request.get('x-offline-commit-id') || '');
     if (commitId) {
       const { error } = await getSupabase().from('offline_commit_archive').upsert({

@@ -46,7 +46,6 @@ export const DatabasePublishHub: React.FC = () => {
     auditLogs,
     commentBank,
     customReportTemplates,
-    sessionArchives,
     promotionLogs,
     backendStatus,
     initializeMysqlDatabase,
@@ -154,7 +153,6 @@ export const DatabasePublishHub: React.FC = () => {
       term_subject_records: termSubjectRecords.length,
       student_term_summaries: termSummaries.length,
       custom_report_templates: customReportTemplates.length,
-      academic_session_archives: sessionArchives.length,
       student_promotion_history: promotionLogs.length,
       score_audit_logs: auditLogs.length,
       comment_bank: commentBank.length,
@@ -178,7 +176,6 @@ export const DatabasePublishHub: React.FC = () => {
     termSubjectRecords.length,
     termSummaries.length,
     customReportTemplates.length,
-    sessionArchives.length,
     promotionLogs.length,
     auditLogs.length,
     commentBank.length
@@ -207,7 +204,6 @@ export const DatabasePublishHub: React.FC = () => {
         auditLogs,
         commentBank,
         customReportTemplates,
-        sessionArchives,
         promotionLogs
       },
       backendStatus.dbName || 'edugrade_db'
@@ -229,7 +225,6 @@ export const DatabasePublishHub: React.FC = () => {
     auditLogs,
     commentBank,
     customReportTemplates,
-    sessionArchives,
     promotionLogs,
     backendStatus.dbName
   ]);

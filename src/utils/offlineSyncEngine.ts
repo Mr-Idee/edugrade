@@ -33,19 +33,10 @@ export function shouldQueueOfflineChanges(
   return error instanceof TypeError;
 }
 
-export function omitActiveSessionArchive<
-  T extends {
-    sessions?: Array<{ id: number; isCurrent?: boolean }>;
-    sessionArchives?: Array<{ sessionId: number }>;
-  }
->(snapshot: T): T {
-  const activeSession = snapshot.sessions?.find(session => session.isCurrent);
-  if (!activeSession || !snapshot.sessionArchives) return snapshot;
-  const sessionArchives = snapshot.sessionArchives.filter(
-    archive => archive.sessionId !== activeSession.id
-  );
-  if (sessionArchives.length === snapshot.sessionArchives.length) return snapshot;
-  return Object.assign({}, snapshot, { sessionArchives });
+export function omitSessionArchives<T extends object>(snapshot: T): Omit<T, 'sessionArchives'> {
+  const { sessionArchives: _sessionArchives, ...persistedSnapshot } =
+    snapshot as T & { sessionArchives?: unknown };
+  return persistedSnapshot;
 }
 
 export async function readJsonResponse<T>(response: Response): Promise<T> {

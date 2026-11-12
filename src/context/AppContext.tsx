@@ -110,7 +110,7 @@ import {
   loadPendingOfflineDocuments,
   loadPendingOfflineSnapshot,
   mergePendingOfflineSnapshot,
-  omitActiveSessionArchive,
+  omitSessionArchives,
   OfflineConflict,
   OfflineConflictResolution,
   PendingOfflineDocument,
@@ -978,13 +978,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [sessionArchives, setSessionArchives] = useState<AcademicSessionArchive[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.SESSION_ARCHIVES);
-    if (saved) {
-      try {
-        const parsed: AcademicSessionArchive[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch (e) { /* ignore */ }
-    }
     return [
       {
         sessionId: initialSessions[0]?.id || 1,
@@ -1457,8 +1450,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [sessions]);
 
   useEffect(() => {
-    safeSetItem(STORAGE_KEYS.SESSION_ARCHIVES, JSON.stringify(sessionArchives));
-  }, [sessionArchives]);
+    try {
+      localStorage.removeItem(STORAGE_KEYS.SESSION_ARCHIVES);
+    } catch {
+      // Session archives are memory-only; continue if browser storage is unavailable.
+    }
+  }, []);
 
   useEffect(() => {
     safeSetItem(STORAGE_KEYS.PROMOTION_LOGS, JSON.stringify(promotionLogs));
@@ -1492,11 +1489,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeSetItem(STORAGE_KEYS.ACTIVE_REPORT_CARD_TEMPLATE_ID, activeReportCardTemplateId);
   }, [activeReportCardTemplateId]);
 
-  // Keep one local archive for the active session; cloud saves store its live records in the main snapshot.
+  // Keep the active session archive in memory for session switching, but never persist it.
   useEffect(() => {
     if (!currentSession) return;
     setSessionArchives(prev => {
-      if (prev.some(archive => archive.sessionId === currentSession.id)) return prev;
       const updatedEntry: AcademicSessionArchive = {
         sessionId: currentSession.id,
         sessionName: currentSession.name,
@@ -1512,7 +1508,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         termSubjectRecords,
         termSummaries
       };
-      return [...prev, updatedEntry];
+      const existingIndex = prev.findIndex(archive => archive.sessionId === currentSession.id);
+      if (existingIndex < 0) return [...prev, updatedEntry];
+      const existing = prev[existingIndex];
+      if (
+        existing.sessionName === updatedEntry.sessionName &&
+        existing.institutionName === updatedEntry.institutionName &&
+        existing.schoolMotto === updatedEntry.schoolMotto &&
+        existing.principalName === updatedEntry.principalName &&
+        existing.classSections === updatedEntry.classSections &&
+        existing.teachers === updatedEntry.teachers &&
+        existing.students === updatedEntry.students &&
+        existing.enrollments === updatedEntry.enrollments &&
+        existing.scores === updatedEntry.scores &&
+        existing.termSubjectRecords === updatedEntry.termSubjectRecords &&
+        existing.termSummaries === updatedEntry.termSummaries
+      ) return prev;
+      return prev.map((archive, index) => index === existingIndex ? updatedEntry : archive);
     });
   }, [currentSession, classSections, teachers, students, enrollments, scores, termSubjectRecords, termSummaries,
     schoolProfile.name, schoolProfile.motto, schoolProfile.principalName]);
@@ -3665,7 +3677,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       auditLogs,
       commentBank,
       customReportTemplates,
-      sessionArchives,
       promotionLogs,
       officeMessages,
       requiredDocumentSlots,
@@ -3691,7 +3702,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     auditLogs,
     commentBank,
     customReportTemplates,
-    sessionArchives,
     promotionLogs,
     officeMessages,
     requiredDocumentSlots,
@@ -3732,7 +3742,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(snapshot.auditLogs)) setAuditLogs(snapshot.auditLogs);
     if (Array.isArray(snapshot.commentBank)) setCommentBank(snapshot.commentBank);
     if (Array.isArray(snapshot.customReportTemplates)) setCustomReportTemplates(snapshot.customReportTemplates);
-    if (Array.isArray(snapshot.sessionArchives)) setSessionArchives(snapshot.sessionArchives);
+    setSessionArchives([]);
     if (Array.isArray(snapshot.promotionLogs)) setPromotionLogs(snapshot.promotionLogs);
     if (Array.isArray(snapshot.officeMessages)) setOfficeMessages(snapshot.officeMessages);
     if (Array.isArray(snapshot.requiredDocumentSlots)) setRequiredDocumentSlots(snapshot.requiredDocumentSlots);
@@ -3744,10 +3754,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const persistOfflineSnapshot = useCallback(async (snapshot: FullDatabaseSnapshot) => {
     const now = new Date().toISOString();
-    const queuedSnapshot = omitActiveSessionArchive(snapshot);
-    const baseSnapshot = omitActiveSessionArchive(
+    const queuedSnapshot = omitSessionArchives(snapshot) as FullDatabaseSnapshot;
+    const baseSnapshot = omitSessionArchives(
       backendBaseSnapshotRef.current || queuedSnapshot
-    );
+    ) as FullDatabaseSnapshot;
     const updatedQueue = createPendingOfflineSnapshot(
       baseSnapshot,
       queuedSnapshot,
@@ -3796,8 +3806,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           Omit<TeacherDocumentUpload, 'id' | 'uploadedAt' | 'status' | 'executiveRemarks'> & { id: string }
         >();
         if (queuedChanges) {
-          const normalizedBase = omitActiveSessionArchive(queuedChanges.baseSnapshot);
-          const normalizedSnapshot = omitActiveSessionArchive(queuedChanges.snapshot);
+          const normalizedBase = omitSessionArchives(queuedChanges.baseSnapshot) as FullDatabaseSnapshot;
+          const normalizedSnapshot = omitSessionArchives(queuedChanges.snapshot) as FullDatabaseSnapshot;
           const normalizedQueue = {
             ...createPendingOfflineSnapshot(
               normalizedBase,
@@ -3851,9 +3861,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const localSnapshot = getCurrentSnapshot();
         const persistedSnapshot = stateData.state
-          ? omitActiveSessionArchive(
+          ? omitSessionArchives(
               reconcileExecutiveStaffSnapshot(stateData.state as FullDatabaseSnapshot)
-            )
+            ) as FullDatabaseSnapshot
           : localSnapshot;
         backendBaseSnapshotRef.current = persistedSnapshot;
         backendRevisionRef.current = stateData.stateRevision || null;
@@ -4273,7 +4283,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: 'Database save is waiting for persisted school records to finish loading.'
       };
     }
-    const snapshot = omitActiveSessionArchive(buildSnapshot());
+    const snapshot = omitSessionArchives(buildSnapshot()) as FullDatabaseSnapshot;
     if (pendingOfflineSnapshotRef.current || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       try {
         await persistOfflineSnapshot(snapshot);
