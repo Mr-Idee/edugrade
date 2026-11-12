@@ -21,8 +21,11 @@ Then configure the required environment variables and run
 `app_state_store` row, encrypted staff vault, offline commit history, and
 available teacher-upload files; re-encrypts the vault using
 `AUTH_VAULT_ENCRYPTION_KEY`; then imports them to Supabase. It reports counts
-only and never writes secrets into source files. Missing legacy upload files
-are omitted from the imported snapshot.
+only and never writes secrets into source files. Existing Supabase credential
+records are preserved. For staff missing from the legacy vault, the importer
+creates encrypted, first-login credentials from their bootstrap PINs in the
+school snapshot; those staff must set a password after signing in. Missing
+legacy upload files are omitted from the imported snapshot.
 
 Run `npm run db:check` after applying the migration to verify table access,
 the state-write function, an isolated temporary database write, and the private

@@ -7,6 +7,7 @@ import mysql from 'mysql2/promise';
 import type { RowDataPacket } from 'mysql2';
 import { createClient } from '@supabase/supabase-js';
 import type { FullDatabaseSnapshot } from '../src/utils/sqlExportGenerator.ts';
+import type { UserRole } from '../src/types/index.ts';
 
 interface LegacyEncryptedPayload {
   alg: string;
@@ -55,6 +56,10 @@ function encryptVault(vault: Record<string, unknown>, secret: string): string {
     tag: cipher.getAuthTag().toString('base64'),
     ciphertext: ciphertext.toString('base64')
   });
+}
+
+function normalizeUsername(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 async function main(): Promise<void> {
@@ -138,9 +143,72 @@ async function main(): Promise<void> {
     )) {
       throw new Error('The local authentication vault contains no Super Admin account.');
     }
+
+    const vaultKey = requiredEnvironment('AUTH_VAULT_ENCRYPTION_KEY');
+    const { data: currentVaultRow, error: currentVaultError } = await supabase
+      .from('auth_vault')
+      .select('vault_ciphertext')
+      .eq('id', 1)
+      .maybeSingle();
+    if (currentVaultError) {
+      throw new Error(`Could not read the existing Supabase authentication vault: ${currentVaultError.message}`);
+    }
+
+    const mergedVault: Record<string, unknown> = {};
+    for (const [username, credential] of Object.entries(oldVault)) {
+      const key = normalizeUsername(username);
+      if (!key || Object.hasOwn(mergedVault, key)) {
+        throw new Error('The legacy authentication vault has an empty or duplicate username.');
+      }
+      mergedVault[key] = credential;
+    }
+
+    if (currentVaultRow?.vault_ciphertext) {
+      const currentVault = decryptLegacyVault(
+        currentVaultRow.vault_ciphertext,
+        crypto.scryptSync(vaultKey, 'edugrade-auth-vault-v1', 32)
+      );
+      for (const [username, credential] of Object.entries(currentVault)) {
+        const key = normalizeUsername(username);
+        if (!key) throw new Error('The Supabase authentication vault contains an empty username.');
+        mergedVault[key] = credential;
+      }
+    }
+
+    const staffRoles = new Set<UserRole>([
+      'SUPER_ADMIN',
+      'PRINCIPAL',
+      'HEAD_OF_SCHOOLS',
+      'VICE_PRINCIPAL',
+      'CLASS_TEACHER',
+      'SUBJECT_TEACHER'
+    ]);
+    let staffCredentialsAdded = 0;
+    let staffCredentialsSkipped = 0;
+    for (const teacher of cloudSnapshot.teachers) {
+      const username = normalizeUsername(teacher.username || '');
+      const role = teacher.systemRole;
+      const initialPin = teacher.initialPin || '';
+      if (!username || !teacher.fullName.trim() || !role || !staffRoles.has(role) || !/^\d{4}$/.test(initialPin)) {
+        staffCredentialsSkipped += 1;
+        continue;
+      }
+      if (Object.hasOwn(mergedVault, username)) continue;
+      mergedVault[username] = {
+        username,
+        fullName: teacher.fullName,
+        role,
+        initialPin,
+        mustSetPassword: true,
+        passwordResetRequested: false,
+        updatedAt: new Date().toISOString()
+      };
+      staffCredentialsAdded += 1;
+    }
+
     const { error: vaultError } = await supabase.from('auth_vault').upsert({
       id: 1,
-      vault_ciphertext: encryptVault(oldVault, requiredEnvironment('AUTH_VAULT_ENCRYPTION_KEY')),
+      vault_ciphertext: encryptVault(mergedVault, vaultKey),
       updated_at: new Date().toISOString()
     });
     if (vaultError) throw new Error(`Could not import staff authentication: ${vaultError.message}`);
@@ -183,7 +251,9 @@ async function main(): Promise<void> {
       documents: uploadedDocuments,
       offlineCommits: offlineCommits.length,
       stateRevision: revision,
-      authVaultImported: true
+      authVaultImported: true,
+      staffCredentialsAdded,
+      staffCredentialsSkipped
     }));
   } finally {
     await connection.end();

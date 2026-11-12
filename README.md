@@ -12,7 +12,9 @@ built with React, TypeScript, Vercel serverless functions, and Supabase.
    the local `.env` and Vercel project settings. Keep server secrets out of
    browser code and Git.
 3. With the legacy MySQL database available, run `npm run db:import` to import
-   the canonical school snapshot and encrypted staff vault.
+   the canonical school snapshot and encrypted staff vault. Staff accounts
+   missing from the legacy vault are initialized from snapshot bootstrap PINs
+   and must set a password on first sign-in.
 4. Run `npm run db:check` to verify Supabase tables, state reads, write permissions,
    and document storage without changing school records.
 5. Run `npm run lint`, `npm test`, and `npm run build`.
