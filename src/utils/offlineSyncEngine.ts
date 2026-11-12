@@ -23,6 +23,31 @@ export interface PendingOfflineSnapshot<T> {
   changedAt: Record<string, string>;
 }
 
+export function shouldQueueOfflineChanges(
+  browserOnline: boolean,
+  status: number | null,
+  error?: unknown
+): boolean {
+  if (!browserOnline) return true;
+  if (status !== null) return [408, 502, 503, 504].includes(status);
+  return error instanceof TypeError;
+}
+
+export function omitActiveSessionArchive<
+  T extends {
+    sessions?: Array<{ id: number; isCurrent?: boolean }>;
+    sessionArchives?: Array<{ sessionId: number }>;
+  }
+>(snapshot: T): T {
+  const activeSession = snapshot.sessions?.find(session => session.isCurrent);
+  if (!activeSession || !snapshot.sessionArchives) return snapshot;
+  const sessionArchives = snapshot.sessionArchives.filter(
+    archive => archive.sessionId !== activeSession.id
+  );
+  if (sessionArchives.length === snapshot.sessionArchives.length) return snapshot;
+  return Object.assign({}, snapshot, { sessionArchives });
+}
+
 export async function readJsonResponse<T>(response: Response): Promise<T> {
   const body = await response.text();
   if (!body.trim()) {
@@ -132,6 +157,14 @@ export function loadPendingOfflineSnapshot<T>(): Promise<PendingOfflineSnapshot<
 
 export function savePendingOfflineSnapshot<T>(queue: PendingOfflineSnapshot<T>): Promise<IDBValidKey> {
   return useStore<IDBValidKey>(SNAPSHOT_STORE, 'readwrite', store => store.put(queue));
+}
+
+export async function clearPendingOfflineSnapshot(): Promise<void> {
+  await useStore<undefined>(
+    SNAPSHOT_STORE,
+    'readwrite',
+    store => store.delete('pending-snapshot')
+  );
 }
 
 export async function clearPendingOfflineSnapshotIfMatches(commitId: string): Promise<boolean> {

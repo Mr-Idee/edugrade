@@ -102,6 +102,7 @@ import {
   validateAndParseBackupFile
 } from '../utils/backupRestoreEngine';
 import {
+  clearPendingOfflineSnapshot,
   clearPendingOfflineSnapshotIfMatches,
   createPendingOfflineSnapshot,
   encodeJsonRequestBody,
@@ -109,6 +110,7 @@ import {
   loadPendingOfflineDocuments,
   loadPendingOfflineSnapshot,
   mergePendingOfflineSnapshot,
+  omitActiveSessionArchive,
   OfflineConflict,
   OfflineConflictResolution,
   PendingOfflineDocument,
@@ -116,7 +118,8 @@ import {
   removePendingOfflineDocument,
   readJsonResponse,
   savePendingOfflineDocument,
-  savePendingOfflineSnapshot
+  savePendingOfflineSnapshot,
+  shouldQueueOfflineChanges
 } from '../utils/offlineSyncEngine';
 import { uploadDocumentToCloud } from '../utils/cloudDocumentStorage';
 
@@ -1291,10 +1294,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const handleOnline = () => {
       setIsOnline(true);
       if (pendingOfflineSnapshotRef.current) {
-        setOfflineSyncMessage('Connection restored. Review and commit your pending offline changes.');
+        setOfflineSyncMessage('Internet connection restored. Checking Supabase before offering pending changes.');
       }
     };
-    const handleOffline = () => setIsOnline(false);
+    const handleOffline = () => {
+      setIsOnline(false);
+      setBackendStatus(previous => ({
+        ...previous,
+        databaseConnected: false,
+        statusMessage: 'Network connection lost; Supabase availability is not confirmed.'
+      }));
+    };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
@@ -1302,6 +1312,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  const hasPendingOfflineWork = Boolean(pendingOfflineSnapshot || pendingOfflineDocumentCount > 0);
+  useEffect(() => {
+    if (!hasPendingOfflineWork || !isOnline || backendStatus.databaseConnected) return;
+    let active = true;
+    const checkDatabaseHealth = async () => {
+      try {
+        const response = await fetch('/api/health', { cache: 'no-store' });
+        const result = await readJsonResponse<{ ok?: boolean; error?: string }>(response);
+        if (!response.ok || !result.ok) {
+          const message = result.error || `Supabase health check failed (HTTP ${response.status}).`;
+          if (active) {
+            setBackendStatus(previous => ({
+              ...previous,
+              databaseConnected: false,
+              statusMessage: message
+            }));
+          }
+          return;
+        }
+        if (active) {
+          setBackendStatus(previous => ({
+            ...previous,
+            nodeConnected: true,
+            databaseConnected: true,
+            storageMode: 'SUPABASE_LIVE',
+            statusMessage: 'Supabase is reachable. Review pending offline changes before committing.'
+          }));
+          setOfflineSyncMessage('Supabase connection restored. Review and commit your pending offline changes.');
+        }
+      } catch (error) {
+        if (active) {
+          const message = `Could not verify Supabase availability: ${error instanceof Error ? error.message : String(error)}`;
+          setBackendStatus(previous => ({
+            ...previous,
+            databaseConnected: false,
+            statusMessage: message
+          }));
+        }
+      }
+    };
+
+    void checkDatabaseHealth();
+    const interval = window.setInterval(() => void checkDatabaseHealth(), 10000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [hasPendingOfflineWork, isOnline, backendStatus.databaseConnected]);
 
   // Safe local storage writer
   const safeSetItem = (key: string, value: string) => {
@@ -1433,10 +1492,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeSetItem(STORAGE_KEYS.ACTIVE_REPORT_CARD_TEMPLATE_ID, activeReportCardTemplateId);
   }, [activeReportCardTemplateId]);
 
-  // Keep active session archive synchronized with live records and current institution name
+  // Keep one local archive for the active session; cloud saves store its live records in the main snapshot.
   useEffect(() => {
     if (!currentSession) return;
     setSessionArchives(prev => {
+      if (prev.some(archive => archive.sessionId === currentSession.id)) return prev;
       const updatedEntry: AcademicSessionArchive = {
         sessionId: currentSession.id,
         sessionName: currentSession.name,
@@ -1452,25 +1512,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         termSubjectRecords,
         termSummaries
       };
-      const exists = prev.some(a => a.sessionId === currentSession.id);
-      if (exists) {
-        return prev.map(a => (a.sessionId === currentSession.id ? updatedEntry : a));
-      }
       return [...prev, updatedEntry];
     });
-  }, [
-    currentSession,
-    schoolProfile.name,
-    schoolProfile.motto,
-    schoolProfile.principalName,
-    classSections,
-    teachers,
-    students,
-    enrollments,
-    scores,
-    termSubjectRecords,
-    termSummaries
-  ]);
+  }, [currentSession, classSections, teachers, students, enrollments, scores, termSubjectRecords, termSummaries,
+    schoolProfile.name, schoolProfile.motto, schoolProfile.principalName]);
 
   const currentSection = useMemo(() => {
     return classSections.find(s => s.id === selectedSectionId) || classSections[0];
@@ -1553,7 +1598,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         termSummaries: []
       };
 
-      setSessionArchives(prev => [...prev, newArchive]);
+      setSessionArchives(prev => {
+        const preservedArchives = shouldMakeActive
+          ? [
+              ...prev.filter(archive => archive.sessionId !== currentSession.id),
+              {
+                sessionId: currentSession.id,
+                sessionName: currentSession.name,
+                institutionName: schoolProfile.name,
+                schoolMotto: schoolProfile.motto,
+                principalName: schoolProfile.principalName,
+                updatedAt: new Date().toISOString(),
+                classSections,
+                teachers,
+                students,
+                enrollments,
+                scores,
+                termSubjectRecords,
+                termSummaries
+              }
+            ]
+          : prev;
+        return [
+          ...preservedArchives.filter(archive => archive.sessionId !== newSessionId),
+          newArchive
+        ];
+      });
 
       if (shouldMakeActive) {
         setSessions(prev => [
@@ -1573,14 +1643,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setLastAutoSavedTime(new Date().toLocaleTimeString());
       return newSession;
     },
-    [sessions, schoolProfile, students, enrollments, classSections, teachers]
+    [sessions, currentSession, schoolProfile, students, enrollments, classSections, teachers,
+      scores, termSubjectRecords, termSummaries]
   );
 
   // Switch Active Academic Session and load its student records from the database archive
   const selectActiveSession = useCallback(
     (sessionId: number) => {
       const targetSession = sessions.find(s => s.id === sessionId);
-      if (!targetSession) return;
+      if (!targetSession || sessionId === currentSession.id) return;
 
       // Save current session state first
       const currentArchiveSnapshot: AcademicSessionArchive = {
@@ -3673,10 +3744,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const persistOfflineSnapshot = useCallback(async (snapshot: FullDatabaseSnapshot) => {
     const now = new Date().toISOString();
-    const baseSnapshot = backendBaseSnapshotRef.current || snapshot;
+    const queuedSnapshot = omitActiveSessionArchive(snapshot);
+    const baseSnapshot = omitActiveSessionArchive(
+      backendBaseSnapshotRef.current || queuedSnapshot
+    );
     const updatedQueue = createPendingOfflineSnapshot(
       baseSnapshot,
-      snapshot,
+      queuedSnapshot,
       backendRevisionRef.current,
       now,
       pendingOfflineSnapshotRef.current || undefined
@@ -3699,6 +3773,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setOfflineSyncMessage('Your changes are saved on this device and need an explicit commit to the database.');
     setBackendStatus(previous => ({
       ...previous,
+      databaseConnected: typeof navigator === 'undefined' || navigator.onLine
+        ? previous.databaseConnected
+        : false,
       isSyncing: false,
       statusMessage: 'Changes are queued on this device and have not yet been committed to the database.'
     }));
@@ -3718,6 +3795,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const queuedDocuments = await loadPendingOfflineDocuments<
           Omit<TeacherDocumentUpload, 'id' | 'uploadedAt' | 'status' | 'executiveRemarks'> & { id: string }
         >();
+        if (queuedChanges) {
+          const normalizedBase = omitActiveSessionArchive(queuedChanges.baseSnapshot);
+          const normalizedSnapshot = omitActiveSessionArchive(queuedChanges.snapshot);
+          const normalizedQueue = {
+            ...createPendingOfflineSnapshot(
+              normalizedBase,
+              normalizedSnapshot,
+              queuedChanges.baseRevision,
+              queuedChanges.updatedAt
+            ),
+            clientId: queuedChanges.clientId,
+            commitId: queuedChanges.commitId,
+            actorUsername: queuedChanges.actorUsername,
+            startedAt: queuedChanges.startedAt,
+            updatedAt: queuedChanges.updatedAt
+          };
+          if (!Object.keys(normalizedQueue.changedAt).length && queuedDocuments.length === 0) {
+            await clearPendingOfflineSnapshot();
+            queuedChanges = undefined;
+          } else {
+            queuedChanges = normalizedQueue;
+            await savePendingOfflineSnapshot(normalizedQueue);
+          }
+        }
         if (cancelled) return;
         pendingOfflineSnapshotRef.current = queuedChanges || null;
         setPendingOfflineSnapshot(queuedChanges || null);
@@ -3750,7 +3851,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const localSnapshot = getCurrentSnapshot();
         const persistedSnapshot = stateData.state
-          ? reconcileExecutiveStaffSnapshot(stateData.state as FullDatabaseSnapshot)
+          ? omitActiveSessionArchive(
+              reconcileExecutiveStaffSnapshot(stateData.state as FullDatabaseSnapshot)
+            )
           : localSnapshot;
         backendBaseSnapshotRef.current = persistedSnapshot;
         backendRevisionRef.current = stateData.stateRevision || null;
@@ -4157,7 +4260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [currentRole]
   );
 
-  // Sync current snapshot to Node.js + MySQL backend
+  // Save directly to Supabase while available; the durable outbox is reserved for outages.
   const syncToBackend = useCallback(async (): Promise<{
     savedToDatabase: boolean;
     savedToNodeDisk: boolean;
@@ -4170,7 +4273,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: 'Database save is waiting for persisted school records to finish loading.'
       };
     }
-    const snapshot = buildSnapshot();
+    const snapshot = omitActiveSessionArchive(buildSnapshot());
     if (pendingOfflineSnapshotRef.current || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       try {
         await persistOfflineSnapshot(snapshot);
@@ -4185,14 +4288,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
     setBackendStatus(prev => ({ ...prev, isSyncing: true }));
+    let requestStarted = false;
     try {
+      const body = await encodeJsonRequestBody({
+        snapshot,
+        stateRevision: backendRevisionRef.current
+      });
+      requestStarted = true;
       const res = await fetch('/api/state', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: await encodeJsonRequestBody({
-          snapshot,
-          stateRevision: backendRevisionRef.current
-        })
+        body
       });
       if (res.ok) {
         const data = await res.json();
@@ -4206,13 +4312,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (savedToDatabase) {
           backendBaseSnapshotRef.current = snapshot;
           backendRevisionRef.current = data.stateRevision || null;
-        } else {
-          try {
-            await persistOfflineSnapshot(snapshot);
-          } catch (error) {
-            const queueError = ` Offline queue could not be saved: ${error instanceof Error ? error.message : String(error)}`;
-            setOfflineSyncMessage(`${message}.${queueError}`);
-          }
         }
         setBackendStatus(prev => ({
           ...prev,
@@ -4231,15 +4330,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         const data = await res.json().catch(() => null);
         const message = data?.error || `Database sync failed (HTTP ${res.status})`;
-        try {
-          await persistOfflineSnapshot(snapshot);
-        } catch (error) {
-          setOfflineSyncMessage(
-            `${message}. Offline queue failed: ${error instanceof Error ? error.message : String(error)}`
-          );
+        if (shouldQueueOfflineChanges(
+          typeof navigator === 'undefined' || navigator.onLine,
+          res.status
+        )) {
+          try {
+            await persistOfflineSnapshot(snapshot);
+          } catch (error) {
+            setOfflineSyncMessage(
+              `${message}. Offline queue failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
+        } else {
+          setOfflineSyncMessage(`${message}. This was not queued as an offline change.`);
         }
         setBackendStatus(prev => ({
           ...prev,
+          nodeConnected: true,
+          databaseConnected: shouldQueueOfflineChanges(
+            typeof navigator === 'undefined' || navigator.onLine,
+            res.status
+          ) ? false : prev.databaseConnected,
           isSyncing: false,
           statusMessage: message
         }));
@@ -4251,16 +4362,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch (error) {
       const message = `Database sync failed: ${error instanceof Error ? error.message : String(error)}`;
-      try {
-        await persistOfflineSnapshot(snapshot);
-      } catch (queueError) {
-        setOfflineSyncMessage(
-          `${message}. Offline queue failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`
-        );
+      const browserOnline = typeof navigator === 'undefined' || navigator.onLine;
+      const isOfflineFailure = shouldQueueOfflineChanges(
+        browserOnline,
+        null,
+        requestStarted ? error : undefined
+      );
+      if (isOfflineFailure) {
+        try {
+          await persistOfflineSnapshot(snapshot);
+        } catch (queueError) {
+          setOfflineSyncMessage(
+            `${message}. Offline queue failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`
+          );
+        }
+      } else {
+        setOfflineSyncMessage(`${message}. This was not queued as an offline change.`);
       }
       setBackendStatus(prev => ({
         ...prev,
-        nodeConnected: false,
+        nodeConnected: isOfflineFailure ? false : prev.nodeConnected,
+        databaseConnected: isOfflineFailure ? false : prev.databaseConnected,
         isSyncing: false,
         statusMessage: message
       }));
@@ -4284,8 +4406,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setOfflineSyncMessage(message);
       return { ok: false, message };
     }
+    if (!backendStatus.databaseConnected) {
+      const message = 'Supabase is not confirmed reachable yet. Pending changes remain saved on this device.';
+      setOfflineSyncMessage(message);
+      return { ok: false, message };
+    }
 
     setBackendStatus(previous => ({ ...previous, isSyncing: true }));
+    let databaseUnavailable = false;
     try {
       const localClientId = queue.clientId || localStorage.getItem('edugrade_offline_client_id_v1') || createOfflineId();
       safeSetItem('edugrade_offline_client_id_v1', localClientId);
@@ -4364,6 +4492,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           documentDeletes
         })
       });
+      databaseUnavailable = shouldQueueOfflineChanges(
+        typeof navigator === 'undefined' || navigator.onLine,
+        response.status
+      );
       const result = await readJsonResponse<{
         ok?: boolean;
         error?: string;
@@ -4411,7 +4543,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         await savePendingOfflineSnapshot(rebasedQueue);
         pendingOfflineSnapshotRef.current = rebasedQueue;
         setPendingOfflineSnapshot(rebasedQueue);
-        setOfflineSyncMessage('Committed changes were saved to MySQL. Newer edits remain queued for a later commit.');
+        setOfflineSyncMessage('Committed changes were saved to Supabase. Newer edits remain queued for a later commit.');
       } else {
         applySnapshotToState(committedSnapshot);
         pendingOfflineSnapshotRef.current = null;
@@ -4421,14 +4553,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setPendingOfflineDocumentCount(remainingDocuments.length);
       setOfflineConflicts([]);
       const message = remainingQueue
-        ? 'Committed changes were saved to MySQL. Newer edits remain queued for a later commit.'
+        ? 'Committed changes were saved to Supabase. Newer edits remain queued for a later commit.'
         : result.savedToDatabase
-        ? 'Offline changes and queued documents were committed to MySQL and server storage.'
-        : 'Offline changes and queued documents were committed to server storage; MySQL is not currently connected.';
+        ? 'Offline changes and queued documents were committed to Supabase and storage.'
+        : 'Offline changes were not confirmed saved to Supabase.';
       setOfflineSyncMessage(message);
       setBackendStatus(previous => ({
         ...previous,
-        nodeConnected: Boolean(result.savedToNodeDisk),
+        nodeConnected: true,
         databaseConnected: Boolean(result.savedToDatabase),
         isSyncing: false,
         lastSyncedAt: result.savedToDatabase ? new Date().toLocaleTimeString() : previous.lastSyncedAt,
@@ -4438,10 +4570,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (error) {
       const message = `Offline changes were not committed: ${error instanceof Error ? error.message : String(error)}`;
       setOfflineSyncMessage(message);
-      setBackendStatus(previous => ({ ...previous, isSyncing: false, statusMessage: message }));
+      databaseUnavailable = databaseUnavailable || !(
+        typeof navigator === 'undefined' || navigator.onLine
+      ) || error instanceof TypeError;
+      setBackendStatus(previous => ({
+        ...previous,
+        databaseConnected: databaseUnavailable ? false : previous.databaseConnected,
+        isSyncing: false,
+        statusMessage: message
+      }));
       return { ok: false, message };
     }
-  }, [applySnapshotToState, currentUser.username]);
+  }, [applySnapshotToState, backendStatus.databaseConnected, currentUser.username]);
 
   // Initialize MySQL schema & seed all relational tables
   const initializeMysqlDatabase = useCallback(async (): Promise<{ ok: boolean; message: string; tablesCount?: number }> => {

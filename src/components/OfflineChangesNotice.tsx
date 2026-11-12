@@ -27,14 +27,15 @@ export const OfflineChangesNotice: React.FC = () => {
   const [isCommitting, setIsCommitting] = useState(false);
   const [resolutions, setResolutions] = useState<Record<string, OfflineConflictResolution>>({});
   const hasPendingChanges = Boolean(pendingOfflineSnapshot);
+  const canCommit = isOnline && backendStatus.databaseConnected;
 
   useEffect(() => {
-    if (hasPendingChanges && isOnline) setIsOpen(true);
+    if (hasPendingChanges && canCommit) setIsOpen(true);
     if (!hasPendingChanges) {
       setIsOpen(false);
       setResolutions({});
     }
-  }, [hasPendingChanges, isOnline]);
+  }, [hasPendingChanges, canCommit]);
 
   const changeEntries = useMemo(
     () => Object.entries(pendingOfflineSnapshot?.changedAt || {}),
@@ -60,7 +61,7 @@ export const OfflineChangesNotice: React.FC = () => {
           <Cloud className="h-5 w-5 shrink-0 text-amber-700" />
           <div className="min-w-0 flex-1">
             <div className="text-xs font-black text-amber-950">
-              {isOnline ? 'Offline changes need committing' : 'Changes saved on this device'}
+              {canCommit ? 'Offline changes need committing' : 'Changes saved on this device'}
             </div>
             <div className="text-[11px] text-amber-800">
               {changeEntries.length + pendingOfflineDocumentCount} pending changes
@@ -91,12 +92,12 @@ export const OfflineChangesNotice: React.FC = () => {
                 </div>
                 <div>
                   <h2 id="offline-changes-title" className="text-lg font-black">
-                    {isOnline ? 'Review offline changes' : 'Offline changes are saved locally'}
+                    {canCommit ? 'Review offline changes' : 'Offline changes are saved locally'}
                   </h2>
                   <p className="mt-1 text-xs text-slate-300">
-                    {isOnline
+                    {canCommit
                       ? 'Choose whether to commit pending data. Changes are compared with the latest database state before saving.'
-                      : 'Your entries are stored on this device and will be offered for database commit when the connection returns.'}
+                      : 'Your entries are stored on this device. The app will offer them for database commit after Supabase availability is confirmed.'}
                   </p>
                 </div>
               </div>
@@ -225,7 +226,7 @@ export const OfflineChangesNotice: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => void handleCommit()}
-                  disabled={!isOnline || isCommitting || !allConflictsResolved}
+                  disabled={!canCommit || isCommitting || !allConflictsResolved}
                   className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isCommitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}

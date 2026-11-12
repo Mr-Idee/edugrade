@@ -43,6 +43,23 @@ async function main(): Promise<void> {
     throw new Error(`Could not read the canonical school state: ${stateError.code} ${stateError.message}`);
   }
 
+  const { data: loadedRows, error: loadFunctionError } = await supabase.rpc('load_app_state');
+  const loadStateFunctionAvailable = !loadFunctionError;
+  if (loadFunctionError && !['PGRST202', '42883'].includes(loadFunctionError.code || '')) {
+    throw new Error(
+      `Could not validate the Supabase state-read function: ${loadFunctionError.code} ${loadFunctionError.message}. Apply the latest Supabase migration.`
+    );
+  }
+  if (loadStateFunctionAvailable) {
+    const loadedState = Array.isArray(loadedRows) ? loadedRows[0] : loadedRows;
+    if (
+      Boolean(loadedState) !== Boolean(state) ||
+      (loadedState && state && loadedState.state_revision !== state.state_revision)
+    ) {
+      throw new Error('The Supabase state-read function did not return the canonical state revision.');
+    }
+  }
+
   const { error: saveFunctionError } = await supabase.rpc('save_app_state', {
     p_state: [],
     p_expected_revision: null
@@ -102,6 +119,7 @@ async function main(): Promise<void> {
     supabaseWrite: true,
     stateInitialized: Boolean(state),
     stateRevision: state?.state_revision || null,
+    loadStateFunctionAvailable,
     documentBucket: 'edugrade-documents'
   }));
 }

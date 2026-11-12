@@ -49,6 +49,11 @@ interface StateRow {
   updated_at: string;
 }
 
+interface StateMetadata {
+  state_revision: string;
+  updated_at: string;
+}
+
 const SESSION_COOKIE = 'edugrade_session';
 const require = createRequire(import.meta.url);
 const compression = require('compression') as typeof import('compression');
@@ -66,6 +71,7 @@ const USER_ROLES = new Set<UserRole>([
 ]);
 const app = express();
 let supabaseClient: SupabaseClient | null = null;
+let warnedMissingLoadFunction = false;
 
 app.set('trust proxy', 1);
 app.use(compression());
@@ -332,14 +338,60 @@ function getSnapshot(value: unknown): value is FullDatabaseSnapshot {
   );
 }
 
+function getErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) return undefined;
+  return typeof error.code === 'string' ? error.code : undefined;
+}
+
+function wrapSupabaseError(message: string, error: { message: string; code?: string }): Error {
+  const wrapped = new Error(`${message}: ${error.message}`);
+  if (error.code) Object.assign(wrapped, { code: error.code });
+  return wrapped;
+}
+
+function omitActiveSessionArchive(snapshot: FullDatabaseSnapshot): FullDatabaseSnapshot {
+  const activeSession = snapshot.sessions.find(session => session.isCurrent);
+  if (!activeSession || !snapshot.sessionArchives) return snapshot;
+  const sessionArchives = snapshot.sessionArchives.filter(
+    archive => archive.sessionId !== activeSession.id
+  );
+  if (sessionArchives.length === snapshot.sessionArchives.length) return snapshot;
+  return { ...snapshot, sessionArchives };
+}
+
 async function loadState(): Promise<StateRow | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.rpc('load_app_state');
+  if (error && !['PGRST202', '42883'].includes(error.code || '')) {
+    throw wrapSupabaseError('Could not load school records from Supabase', error);
+  }
+  if (error) {
+    if (!warnedMissingLoadFunction) {
+      console.warn('Supabase load_app_state migration is pending; using a direct state read temporarily.');
+      warnedMissingLoadFunction = true;
+    }
+    const fallback = await supabase
+      .from('app_state_store')
+      .select('state_json,state_revision,updated_at')
+      .eq('id', 1)
+      .maybeSingle();
+    if (fallback.error) {
+      throw wrapSupabaseError('Could not load school records from Supabase', fallback.error);
+    }
+    return fallback.data as StateRow | null;
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  return (row as StateRow | null) || null;
+}
+
+async function loadStateMetadata(): Promise<StateMetadata | null> {
   const { data, error } = await getSupabase()
     .from('app_state_store')
-    .select('state_json,state_revision,updated_at')
+    .select('state_revision,updated_at')
     .eq('id', 1)
     .maybeSingle();
-  if (error) throw new Error(`Could not load school records from Supabase: ${error.message}`);
-  return data as StateRow | null;
+  if (error) throw wrapSupabaseError('Could not load school record metadata from Supabase', error);
+  return data as StateMetadata | null;
 }
 
 function isAdmin(role: UserRole): boolean {
@@ -474,7 +526,7 @@ async function saveState(
   expectedRevision: string | null
 ): Promise<{ stateRevision: string; updatedAt: string }> {
   const { data, error } = await getSupabase().rpc('save_app_state', {
-    p_state: snapshot,
+    p_state: omitActiveSessionArchive(snapshot),
     p_expected_revision: expectedRevision
   });
   if (error) {
@@ -483,7 +535,7 @@ async function saveState(
       Object.assign(conflict, { status: 409 });
       throw conflict;
     }
-    throw new Error(`Could not save school records to Supabase: ${error.message}`);
+    throw wrapSupabaseError('Could not save school records to Supabase', error);
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.state_revision || !row?.updated_at) {
@@ -566,7 +618,7 @@ app.get('/api/health', async (_request, response) => {
 
 app.get('/api/db/status', async (_request, response) => {
   try {
-    const row = await loadState();
+    const row = await loadStateMetadata();
     response.json({
       ok: true,
       nodeVersion: process.version,
@@ -870,7 +922,9 @@ app.get('/api/state', async (request: AuthenticatedRequest, response, next) => {
       databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
       stateRevision: row?.state_revision || null,
-      state: row ? filterSnapshotForStaff(row.state_json, request.auth!) : null
+      state: row
+        ? omitActiveSessionArchive(filterSnapshotForStaff(row.state_json, request.auth!))
+        : null
     });
   } catch (error) {
     next(error);
@@ -886,24 +940,27 @@ app.post('/api/state', async (request: AuthenticatedRequest, response, next) => 
       response.status(400).json({ ok: false, error: 'Invalid school database snapshot.' });
       return;
     }
-    const current = await loadState();
-    if (!current && !isAdmin(request.auth!.record.role)) {
+    const admin = isAdmin(request.auth!.record.role);
+    const current = admin ? null : await loadState();
+    const currentMetadata = admin ? await loadStateMetadata() : current;
+    if (!currentMetadata && !admin) {
       response.status(403).json({ ok: false, error: 'An administrator must initialize school data first.' });
       return;
     }
     const expectedRevision = getExpectedRevision(request, body);
-    if (current && expectedRevision && expectedRevision !== current.state_revision) {
+    const currentRevision = currentMetadata?.state_revision || null;
+    if (currentRevision && expectedRevision && expectedRevision !== currentRevision) {
       response.status(409).json({
         ok: false,
         error: 'School records changed while you were editing. Reload before saving.',
-        stateRevision: current.state_revision
+        stateRevision: currentRevision
       });
       return;
     }
-    const snapshot = current
+    const snapshot = !admin && current
       ? mergeScopedSnapshot(current.state_json, submitted, request.auth!)
       : normalizeEnrollmentIds(submitted);
-    const saved = await saveState(snapshot, current?.state_revision || null);
+    const saved = await saveState(snapshot, currentRevision);
     response.json({
       ok: true,
       databaseConnected: true,
@@ -949,6 +1006,7 @@ app.post('/api/state/offline-commit', async (request: AuthenticatedRequest, resp
     }
     const merged = mergeScopedSnapshot(currentRow.state_json, merge.snapshot, request.auth!);
     const saved = await saveState(merged, currentRow.state_revision);
+    const persistedSnapshot = omitActiveSessionArchive(merged);
     const commitId = String(body.commitId || request.get('x-offline-commit-id') || '');
     if (commitId) {
       const { error } = await getSupabase().from('offline_commit_archive').upsert({
@@ -964,7 +1022,7 @@ app.post('/api/state/offline-commit', async (request: AuthenticatedRequest, resp
     }
     response.json({
       ok: true,
-      state: filterSnapshotForStaff(merged, request.auth!),
+      state: filterSnapshotForStaff(persistedSnapshot, request.auth!),
       stateRevision: saved.stateRevision,
       savedToNodeDisk: false,
       savedToDatabase: true,
@@ -1246,10 +1304,18 @@ app.all('/api/*', (_request, response) => {
 });
 
 app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
-  const status =
+  const explicitStatus =
     typeof error === 'object' && error !== null && 'status' in error
       ? Number((error as { status: unknown }).status)
-      : 500;
+      : undefined;
+  const errorCode = getErrorCode(error);
+  const availabilityFailure =
+    errorCode === '57014' ||
+    errorCode === '53300' ||
+    errorCode === '57P01' ||
+    Boolean(errorCode?.startsWith('08')) ||
+    error instanceof TypeError;
+  const status = explicitStatus ?? (availabilityFailure ? 503 : 500);
   if (status >= 500) console.error('Cloud API request failed:', error);
   response.status(Number.isInteger(status) && status >= 400 && status < 600 ? status : 500).json({
     ok: false,
