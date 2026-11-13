@@ -232,7 +232,7 @@ function MainAppContent() {
           <div className="flex items-center space-x-4 text-[11px]">
             <span className="inline-flex items-center space-x-1.5 text-emerald-400">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span data-testid="footer-developer-credit">Developed by Mr Administrator</span>
+              <span data-testid="footer-developer-credit">Developed by Mr Idee</span>
             </span>
             <span>•</span>
             <span>Academic Session {currentSession.name}</span>
