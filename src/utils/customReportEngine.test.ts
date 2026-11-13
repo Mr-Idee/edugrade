@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getCustomReportSectionIds,
+  getCustomReportTemplatesForAvailableSections,
   getCustomReportTemplatesForSection,
   mergeScopedCustomReportScores,
   resolveCustomReportColumnEntryValue,
@@ -15,7 +16,7 @@ test('custom report classes are restricted to explicitly configured sections', (
   assert.deepEqual(getCustomReportSectionIds({ sectionId: 5, sectionIds: [] }), [5]);
 });
 
-test('custom report selector only lists sheets configured for the selected class', () => {
+test('custom report templates are scoped to their configured class', () => {
   const templates = [
     { id: 'report-a', sectionId: 2, sectionIds: [2, 4] },
     { id: 'report-b', sectionId: 3, sectionIds: [3] }
@@ -27,6 +28,19 @@ test('custom report selector only lists sheets configured for the selected class
   assert.deepEqual(
     getCustomReportTemplatesForSection(templates, 3).map(template => template.id),
     ['report-b']
+  );
+});
+
+test('score-entry report selector can choose any saved sheet with an existing assigned class', () => {
+  const templates = [
+    { id: 'report-a', sectionId: 2, sectionIds: [2, 4] },
+    { id: 'report-b', sectionId: 3, sectionIds: [3] },
+    { id: 'stale-report', sectionId: 9, sectionIds: [9] }
+  ];
+  assert.deepEqual(
+    getCustomReportTemplatesForAvailableSections(templates, [2, 3, 4])
+      .map(template => template.id),
+    ['report-a', 'report-b']
   );
 });
 

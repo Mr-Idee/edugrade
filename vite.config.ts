@@ -2,12 +2,15 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
+import {fileURLToPath} from 'node:url';
 import {defineConfig, loadEnv} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
 
+const configRoot = fileURLToPath(new URL('.', import.meta.url));
+
 function loadNetworkConfig() {
   try {
-    const configPath = path.resolve(__dirname, 'network.config.json');
+    const configPath = path.resolve(configRoot, 'network.config.json');
     if (fs.existsSync(configPath)) {
       return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     }
@@ -23,12 +26,13 @@ function loadNetworkConfig() {
   };
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const netConfig = loadNetworkConfig();
   const env = loadEnv(mode, process.cwd(), '');
   return {
     envPrefix: ['VITE_', 'SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY'],
     define: {
+      'process.env.NODE_ENV': JSON.stringify(command === 'build' ? 'production' : 'development'),
       'import.meta.env.SUPABASE_URL': JSON.stringify(env.SUPABASE_URL || ''),
       'import.meta.env.SUPABASE_PUBLISHABLE_KEY': JSON.stringify(env.SUPABASE_PUBLISHABLE_KEY || '')
     },
@@ -119,7 +123,7 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': configRoot,
       },
     },
     server: {

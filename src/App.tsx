@@ -3,18 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navigation } from './components/Navigation';
-import { HomeView } from './components/HomeView';
-import { ScoreEntryGrid } from './components/ScoreEntryGrid';
-import { ExecutiveDashboard } from './components/ExecutiveDashboard';
-import { ReportCardView } from './components/ReportCardView';
-import { SheetsDataExplorer } from './components/SheetsDataExplorer';
-import { AuditLogView } from './components/AuditLogView';
-import { MasterManagement } from './components/MasterManagement';
-import { ClassManagementView } from './components/ClassManagementView';
-import { TeachersCornerView } from './components/TeachersCornerView';
 import { OfflineChangesNotice } from './components/OfflineChangesNotice';
 import {
   AppTab,
@@ -22,6 +13,16 @@ import {
   canAccessClassManagement,
   resolveInstitutionLogoUrl
 } from './utils/rbacAndAuth';
+
+const HomeView = lazy(() => import('./components/HomeView').then(module => ({ default: module.HomeView })));
+const ScoreEntryGrid = lazy(() => import('./components/ScoreEntryGrid').then(module => ({ default: module.ScoreEntryGrid })));
+const ExecutiveDashboard = lazy(() => import('./components/ExecutiveDashboard').then(module => ({ default: module.ExecutiveDashboard })));
+const ReportCardView = lazy(() => import('./components/ReportCardView').then(module => ({ default: module.ReportCardView })));
+const SheetsDataExplorer = lazy(() => import('./components/SheetsDataExplorer').then(module => ({ default: module.SheetsDataExplorer })));
+const AuditLogView = lazy(() => import('./components/AuditLogView').then(module => ({ default: module.AuditLogView })));
+const MasterManagement = lazy(() => import('./components/MasterManagement').then(module => ({ default: module.MasterManagement })));
+const ClassManagementView = lazy(() => import('./components/ClassManagementView').then(module => ({ default: module.ClassManagementView })));
+const TeachersCornerView = lazy(() => import('./components/TeachersCornerView').then(module => ({ default: module.TeachersCornerView })));
 
 export type TabType = AppTab;
 
@@ -173,49 +174,51 @@ function MainAppContent() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 print:p-0 print:m-0 print:max-w-none">
-        {effectiveTab === 'home' && (
-          <HomeView
-            onSelectClassAndSubject={handleOpenScoreGridSubject}
-            onNavigateTab={handleGuardedTabChange}
-          />
-        )}
-
-        {isStaffLoggedIn && effectiveTab === 'teachers_corner' && (
-          <TeachersCornerView onOpenReportCard={handleViewReportCard} />
-        )}
-
-        {isStaffLoggedIn && (effectiveTab === 'grid' || effectiveTab === 'registry') && (
-          <ScoreEntryGrid onViewReportCard={handleViewReportCard} />
-        )}
-
-        {isStaffLoggedIn && effectiveTab === 'dashboard' && (
-          <ExecutiveDashboard onSelectStudent={handleViewReportCard} />
-        )}
-
-        {isStaffLoggedIn && effectiveTab === 'report' && (
-          <ReportCardView />
-        )}
-
-        {isStaffLoggedIn && effectiveTab === 'sheets' && (
-          <SheetsDataExplorer
-            onOpenClass={handleOpenClass}
-            onOpenReportCard={handleOpenReportFromSheets}
-          />
-        )}
-
-        {isStaffLoggedIn && effectiveTab === 'audit' && (
-          <AuditLogView onOpenScoreGrid={handleOpenScoreGridSubject} />
-        )}
-
-        {isStaffLoggedIn &&
-          effectiveTab === 'class_management' &&
-          canAccessClassManagement(currentRole) && (
-            <ClassManagementView onOpenMasterSettings={() => setActiveTab('settings')} />
+        <Suspense fallback={<div className="py-12 text-center text-slate-500" role="status">Loading section…</div>}>
+          {effectiveTab === 'home' && (
+            <HomeView
+              onSelectClassAndSubject={handleOpenScoreGridSubject}
+              onNavigateTab={handleGuardedTabChange}
+            />
           )}
 
-        {isStaffLoggedIn && effectiveTab === 'settings' && canAccessMasterSettings(currentRole) && (
-          <MasterManagement initialSubTab="school" />
-        )}
+          {isStaffLoggedIn && effectiveTab === 'teachers_corner' && (
+            <TeachersCornerView onOpenReportCard={handleViewReportCard} />
+          )}
+
+          {isStaffLoggedIn && (effectiveTab === 'grid' || effectiveTab === 'registry') && (
+            <ScoreEntryGrid onViewReportCard={handleViewReportCard} />
+          )}
+
+          {isStaffLoggedIn && effectiveTab === 'dashboard' && (
+            <ExecutiveDashboard onSelectStudent={handleViewReportCard} />
+          )}
+
+          {isStaffLoggedIn && effectiveTab === 'report' && (
+            <ReportCardView />
+          )}
+
+          {isStaffLoggedIn && effectiveTab === 'sheets' && (
+            <SheetsDataExplorer
+              onOpenClass={handleOpenClass}
+              onOpenReportCard={handleOpenReportFromSheets}
+            />
+          )}
+
+          {isStaffLoggedIn && effectiveTab === 'audit' && (
+            <AuditLogView onOpenScoreGrid={handleOpenScoreGridSubject} />
+          )}
+
+          {isStaffLoggedIn &&
+            effectiveTab === 'class_management' &&
+            canAccessClassManagement(currentRole) && (
+              <ClassManagementView onOpenMasterSettings={() => setActiveTab('settings')} />
+            )}
+
+          {isStaffLoggedIn && effectiveTab === 'settings' && canAccessMasterSettings(currentRole) && (
+            <MasterManagement initialSubTab="school" />
+          )}
+        </Suspense>
       </main>
 
       {/* Institutional Footer (Hidden on Print) */}

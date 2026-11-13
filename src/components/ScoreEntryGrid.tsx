@@ -18,6 +18,7 @@ import {
 } from '../utils/academicCalculations';
 import {
   getCustomReportSectionIds,
+  getCustomReportTemplatesForAvailableSections,
   getCustomReportTemplatesForSection,
   resolveCustomReportColumnEntryValue,
   resolveCustomReportColumnScore
@@ -220,23 +221,25 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
     return assessmentComponents.filter(c => c.levelType === currentSection.levelType);
   }, [assessmentComponents, currentSection]);
 
-  const sectionCustomTemplates = useMemo(
-    () => getCustomReportTemplatesForSection(customReportTemplates, selectedSectionId),
-    [customReportTemplates, selectedSectionId]
+  const availableClassSectionIds = useMemo(
+    () => classSections.map(section => section.id),
+    [classSections]
+  );
+  const selectableCustomTemplates = useMemo(
+    () => getCustomReportTemplatesForAvailableSections(customReportTemplates, availableClassSectionIds),
+    [availableClassSectionIds, customReportTemplates]
   );
   const activeCustomTemplate = useMemo(
-    () => sectionCustomTemplates.find(template => template.id === selectedCustomTemplateId)
-      || sectionCustomTemplates[0],
-    [sectionCustomTemplates, selectedCustomTemplateId]
+    () => selectableCustomTemplates.find(template => template.id === selectedCustomTemplateId)
+      || getCustomReportTemplatesForSection(selectableCustomTemplates, selectedSectionId)[0]
+      || selectableCustomTemplates[0],
+    [selectableCustomTemplates, selectedCustomTemplateId, selectedSectionId]
   );
   const activeCustomSectionIds = useMemo(
     () => activeCustomTemplate
-      ? getCustomReportSectionIds(
-          activeCustomTemplate,
-          classSections.map(section => section.id)
-        )
+      ? getCustomReportSectionIds(activeCustomTemplate, availableClassSectionIds)
       : [],
-    [activeCustomTemplate, classSections]
+    [activeCustomTemplate, availableClassSectionIds]
   );
   const customClassSections = useMemo(
     () => classSections.filter(section => activeCustomSectionIds.includes(section.id)),
@@ -244,11 +247,17 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
   );
 
   useEffect(() => {
-    if (!sectionCustomTemplates.some(template => template.id === selectedCustomTemplateId)) {
-      setSelectedCustomTemplateId(sectionCustomTemplates[0]?.id || '');
+    if (!selectableCustomTemplates.some(template => template.id === selectedCustomTemplateId)) {
+      const currentSectionTemplate = getCustomReportTemplatesForSection(
+        selectableCustomTemplates,
+        selectedSectionId
+      )[0];
+      setSelectedCustomTemplateId(
+        currentSectionTemplate?.id || selectableCustomTemplates[0]?.id || ''
+      );
     }
     setCustomScoreErrors({});
-  }, [sectionCustomTemplates, selectedCustomTemplateId]);
+  }, [selectableCustomTemplates, selectedCustomTemplateId, selectedSectionId]);
   useEffect(() => {
     if (
       ledgerMode === 'custom_report' &&
@@ -931,13 +940,20 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                   onChange={event => {
                     setSelectedCustomTemplateId(event.target.value);
                   }}
-                    disabled={!sectionCustomTemplates.length}
+                  disabled={!selectableCustomTemplates.length}
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs font-bold text-white disabled:opacity-60"
                 >
-                  {!sectionCustomTemplates.length && <option value="">No custom report for this class</option>}
-                  {sectionCustomTemplates.map(template => (
-                    <option key={template.id} value={template.id}>{template.title}</option>
-                  ))}
+                  {!selectableCustomTemplates.length && <option value="">No saved custom reports</option>}
+                  {selectableCustomTemplates.map(template => {
+                    const sectionNames = getCustomReportSectionIds(template, availableClassSectionIds)
+                      .map(sectionId => classSections.find(section => section.id === sectionId)?.name)
+                      .filter((name): name is string => Boolean(name));
+                    return (
+                      <option key={template.id} value={template.id}>
+                        {template.title} ({sectionNames.join(', ')})
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
             )}
@@ -982,7 +998,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
             </select>
             {ledgerMode === 'custom_report' && !activeCustomTemplate && (
               <p className="mt-1 text-[10px] font-semibold text-amber-700">
-                No custom report is assigned to this class. Choose another class in the assessment grid or create a report in Master Settings.
+                No saved custom reports are available for the current classes. Create a report in Master Settings and assign it to an existing class.
               </p>
             )}
           </div>

@@ -25,6 +25,17 @@ export function getCustomReportTemplatesForSection<T extends Pick<CustomReportTe
   return templates.filter(template => getCustomReportSectionIds(template).includes(sectionId));
 }
 
+export function getCustomReportTemplatesForAvailableSections<
+  T extends Pick<CustomReportTemplate, 'sectionId' | 'sectionIds'>
+>(
+  templates: T[],
+  availableSectionIds: readonly number[]
+): T[] {
+  return templates.filter(
+    template => getCustomReportSectionIds(template, availableSectionIds).length > 0
+  );
+}
+
 export function resolveCustomReportColumnScore(
   column: CustomReportColumn,
   customScores: Record<string, number | null | undefined> | undefined,

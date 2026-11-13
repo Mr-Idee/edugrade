@@ -121,7 +121,6 @@ import {
   savePendingOfflineSnapshot,
   shouldQueueOfflineChanges
 } from '../utils/offlineSyncEngine';
-import { uploadDocumentToCloud } from '../utils/cloudDocumentStorage';
 
 export interface BackendDatabaseStatus {
   nodeConnected: boolean;
@@ -4461,6 +4460,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const queuedFile = new File([staged.file], staged.fileName, {
           type: staged.mimeType || staged.file.type || 'application/octet-stream'
         });
+        const { uploadDocumentToCloud } = await import('../utils/cloudDocumentStorage');
         const uploadResult = await uploadDocumentToCloud(queuedFile, staged.id, staged.fileName);
         const uploadedFileName = typeof uploadResult.fileName === 'string' ? uploadResult.fileName : '';
         const uploadedFileStoragePath =
