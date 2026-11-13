@@ -11,6 +11,7 @@ import {
   resolveActiveGradingScaleBands,
   getReportCardGradingScaleDisplay
 } from '../utils/academicCalculations';
+import { resolveCustomReportColumnScore } from '../utils/customReportEngine';
 import {
   DEFAULT_INSTITUTION_LOGO_DATA_URI,
   resolveInstitutionLogoUrl
@@ -325,19 +326,7 @@ export const CustomReportSheetView: React.FC = () => {
         const customSubScores = customScoresMap[key] || {};
 
         const colValues = columns.map(col => {
-          let val = 0;
-          if (customSubScores[col.id] !== undefined) {
-            val = Number(customSubScores[col.id]);
-          } else if (col.sourceKey === 'ca1') {
-            val = rec?.ca1Score ?? 0;
-          } else if (col.sourceKey === 'ca2') {
-            val = rec?.ca2Score ?? 0;
-          } else if (col.sourceKey === 'exam') {
-            val = rec?.examScore ?? 0;
-          } else {
-            val = Number(col.defaultValue || 0);
-          }
-          const clamped = Math.min(col.maxScore, Math.max(0, Number(val.toFixed(1))));
+          const clamped = resolveCustomReportColumnScore(col, customSubScores, rec);
           return {
             colId: col.id,
             maxScore: col.maxScore,

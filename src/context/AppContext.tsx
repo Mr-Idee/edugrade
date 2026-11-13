@@ -251,7 +251,7 @@ interface AppContextType {
     studentId: number,
     subjectId: number,
     columnId: string,
-    score: number
+    score: number | null
   ) => void;
 
   // Teacher's Corner, Heads of Department (HODs) & Executive Office (Messages, Required Document Slots, 14-Week Uploads)
@@ -2289,26 +2289,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const updateStudentCustomReportScore = useCallback(
-    (templateId: string, studentId: number, subjectId: number, columnId: string, score: number) => {
+    (templateId: string, studentId: number, subjectId: number, columnId: string, score: number | null) => {
       const st = students.find(s => s.id === studentId);
       if (st?.isRecordSealed) return;
       setCustomReportTemplates(prev =>
         prev.map(t => {
           if (t.id !== templateId) return t;
-          const col = t.columns.find(c => c.id === columnId);
-          const clamped = col ? Math.min(col.maxScore, Math.max(0, Number(score) || 0)) : Math.max(0, Number(score) || 0);
           const key = `${studentId}_${subjectId}`;
           const prevScores = t.studentCustomScores || {};
           const prevSubScores = prevScores[key] || {};
+          const nextSubScores = { ...prevSubScores };
+          if (score === null) {
+            delete nextSubScores[columnId];
+          } else {
+            const col = t.columns.find(c => c.id === columnId);
+            const numericScore = Number(score);
+            if (!Number.isFinite(numericScore)) return t;
+            nextSubScores[columnId] = col
+              ? Math.min(col.maxScore, Math.max(0, numericScore))
+              : Math.max(0, numericScore);
+          }
+          const nextScores = { ...prevScores };
+          if (Object.keys(nextSubScores).length) nextScores[key] = nextSubScores;
+          else delete nextScores[key];
           return {
             ...t,
-            studentCustomScores: {
-              ...prevScores,
-              [key]: {
-                ...prevSubScores,
-                [columnId]: clamped
-              }
-            },
+            studentCustomScores: nextScores,
             updatedAt: new Date().toISOString()
           };
         })

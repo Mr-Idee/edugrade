@@ -15,6 +15,7 @@ import {
   normalizeEnrollmentIds,
   type FullDatabaseSnapshot
 } from '../src/utils/sqlExportGenerator.ts';
+import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
 
 type UserRole =
   | 'SUPER_ADMIN'
@@ -417,6 +418,34 @@ function filterSnapshotForStaff(
   const studentIds = new Set(students.map(student => student.id));
   const subjectFilter = (subjectId: number) => !subjectIds.size || subjectIds.has(subjectId);
   const sections = snapshot.classSections.filter(section => sectionIds.has(section.id));
+  const customReportTemplates = (snapshot.customReportTemplates || [])
+    .filter(template =>
+      (template.sectionIds?.length ? template.sectionIds : [template.sectionId])
+        .some(sectionId => sectionIds.has(sectionId))
+    )
+    .map(template => {
+      const templateSectionIds = new Set(
+        template.sectionIds?.length ? template.sectionIds : [template.sectionId]
+      );
+      const templateStudentIds = new Set(
+        students
+          .filter(student => templateSectionIds.has(student.currentSectionId))
+          .map(student => student.id)
+      );
+      const selectedSubjectIds = new Set(template.selectedSubjectIds || []);
+      const studentCustomScores = Object.fromEntries(
+        Object.entries(template.studentCustomScores || {}).filter(([key]) => {
+          const match = /^(\d+)_(\d+)$/.exec(key);
+          return Boolean(
+            match &&
+            templateStudentIds.has(Number(match[1])) &&
+            selectedSubjectIds.has(Number(match[2])) &&
+            subjectFilter(Number(match[2]))
+          );
+        })
+      );
+      return { ...template, studentCustomScores };
+    });
   const scoped: FullDatabaseSnapshot = {
     ...snapshot,
     classSections: sections,
@@ -439,9 +468,7 @@ function filterSnapshotForStaff(
       summary => sectionIds.has(summary.sectionId) && studentIds.has(summary.studentId)
     ),
     auditLogs: [],
-    customReportTemplates: (snapshot.customReportTemplates || []).filter(template =>
-      sectionIds.has(template.sectionId)
-    ),
+    customReportTemplates,
     sessionArchives: [],
     promotionLogs: [],
     officeMessages: (snapshot.officeMessages || []).filter(message =>
@@ -509,6 +536,30 @@ function mergeScopedSnapshot(
       submitted.termSummaries,
       summary => sectionIds.has(summary.sectionId) && studentIds.has(summary.studentId)
     ),
+    customReportTemplates: (current.customReportTemplates || []).map(template => {
+      const submittedTemplate = submitted.customReportTemplates?.find(item => item.id === template.id);
+      if (!submittedTemplate) return template;
+      const templateSectionIds = new Set(
+        template.sectionIds?.length ? template.sectionIds : [template.sectionId]
+      );
+      const templateStudentIds = new Set(
+        current.students
+          .filter(student => templateSectionIds.has(student.currentSectionId))
+          .map(student => student.id)
+      );
+      const selectedSubjectIds = new Set(template.selectedSubjectIds || []);
+      return {
+        ...template,
+        studentCustomScores: mergeScopedCustomReportScores(
+          template.studentCustomScores,
+          submittedTemplate.studentCustomScores,
+          (studentId, subjectId) =>
+            templateStudentIds.has(studentId) &&
+            selectedSubjectIds.has(subjectId) &&
+            canEdit({ studentId, subjectId })
+        )
+      };
+    }),
     officeMessages: [
       ...(current.officeMessages || []).filter(message => message.senderName !== teacher?.fullName),
       ...(submitted.officeMessages || []).filter(message => message.senderName === teacher?.fullName)
