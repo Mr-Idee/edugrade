@@ -6,6 +6,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { ZipArchive } from 'archiver';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
+  areOfflineValuesEqual,
   mergePendingOfflineSnapshot,
   omitSessionArchives,
   type OfflineConflictResolution,
@@ -1054,7 +1055,16 @@ app.post('/api/state/offline-commit', async (request: AuthenticatedRequest, resp
       return;
     }
     const merged = mergeScopedSnapshot(currentRow.state_json, merge.snapshot, request.auth!);
-    const saved = await saveState(merged, currentRow.state_revision);
+    const hasDataChanges = !areOfflineValuesEqual(
+      omitSessionArchives(merged),
+      omitSessionArchives(currentRow.state_json)
+    );
+    const saved = hasDataChanges
+      ? await saveState(merged, currentRow.state_revision)
+      : {
+          stateRevision: currentRow.state_revision,
+          updatedAt: currentRow.updated_at
+        };
     const persistedSnapshot = omitSessionArchives(merged) as FullDatabaseSnapshot;
     const commitId = String(body.commitId || request.get('x-offline-commit-id') || '');
     if (commitId) {

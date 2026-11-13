@@ -211,14 +211,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function serialize(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(serialize).join(',')}]`;
   if (isRecord(value)) {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${serialize(value[key])}`).join(',')}}`;
+    return `{${Object.keys(value)
+      .filter(key => key !== 'updatedAt' && key !== 'updated_at')
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${serialize(value[key])}`)
+      .join(',')}}`;
   }
   return JSON.stringify(value) ?? 'undefined';
 }
 
-function isEqual(left: unknown, right: unknown): boolean {
+export function areOfflineValuesEqual(left: unknown, right: unknown): boolean {
   return serialize(left) === serialize(right);
 }
+
+const isEqual = areOfflineValuesEqual;
 
 function recordKey(value: unknown, index: number): string {
   if (isRecord(value)) {
@@ -315,6 +321,7 @@ export function mergePendingOfflineSnapshot<T>(
         if (isEqual(baseItem, localItem)) continue;
 
         const serverItem = serverMap.get(key);
+        if (isEqual(localItem, serverItem)) continue;
         const changedKey = `${collection}:${key}`;
         if (isEqual(baseItem, serverItem)) {
           if (localItem === undefined) result.delete(key);
@@ -350,6 +357,7 @@ export function mergePendingOfflineSnapshot<T>(
     }
 
     if (isEqual(baseValue, localValue)) continue;
+    if (isEqual(localValue, serverValue)) continue;
     if (isEqual(baseValue, serverValue)) {
       merged[collection] = localValue;
       continue;

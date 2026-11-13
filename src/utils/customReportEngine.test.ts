@@ -1,9 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  getCustomReportSectionIds,
   mergeScopedCustomReportScores,
   resolveCustomReportColumnScore
 } from './customReportEngine.ts';
+
+test('custom report classes are restricted to explicitly configured sections', () => {
+  const template = { sectionId: 2, sectionIds: [2, 4] };
+  assert.deepEqual(getCustomReportSectionIds(template, [2, 3, 4]), [2, 4]);
+  assert.deepEqual(getCustomReportSectionIds(template, [3]), []);
+  assert.deepEqual(getCustomReportSectionIds({ sectionId: 5, sectionIds: [] }), [5]);
+});
 
 test('custom report score uses a saved override before its configured source', () => {
   const column = { id: 'exam', header: 'Exam', maxScore: 60, sourceKey: 'exam' as const };

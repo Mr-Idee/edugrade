@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createPendingOfflineSnapshot,
+  areOfflineValuesEqual,
   fetchOfflineCommitWithRetry,
   mergePendingOfflineSnapshot,
   omitSessionArchives,
@@ -62,6 +63,36 @@ test('offline snapshot merge reports unresolved conflicts and accepts an explici
 
   assert.equal(resolved.conflicts.length, 0);
   assert.deepEqual(resolved.snapshot?.schoolProfile, { name: 'School B' });
+});
+
+test('offline equality ignores save-time metadata but compares actual record values', () => {
+  assert.equal(
+    areOfflineValuesEqual(
+      { id: 1, score: 18, updatedAt: '2026-11-04T08:30:00.000Z' },
+      { id: 1, score: 18, updatedAt: '2026-11-04T08:40:00.000Z' }
+    ),
+    true
+  );
+  assert.equal(
+    areOfflineValuesEqual(
+      { id: 1, score: 18, updatedAt: '2026-11-04T08:30:00.000Z' },
+      { id: 1, score: 19, updatedAt: '2026-11-04T08:30:00.000Z' }
+    ),
+    false
+  );
+});
+
+test('offline snapshot merge does not ask for a choice when values only differ by save time', () => {
+  const base = { scores: [{ id: 1, score: 12, updatedAt: '2026-11-04T08:00:00.000Z' }] };
+  const local = { scores: [{ id: 1, score: 18, updatedAt: '2026-11-04T08:30:00.000Z' }] };
+  const queue = createPendingOfflineSnapshot(base, local, null, '2026-11-04T08:30:00.000Z');
+  const server = {
+    scores: [{ id: 1, score: 18, updatedAt: '2026-11-04T08:40:00.000Z' }]
+  };
+
+  const result = mergePendingOfflineSnapshot(server, queue, '2026-11-04T08:40:00.000Z');
+  assert.deepEqual(result.conflicts, []);
+  assert.deepEqual(result.snapshot, server);
 });
 
 test('only offline and transient availability failures create an offline queue', () => {

@@ -1,9 +1,21 @@
-import type { CustomReportColumn } from '../types';
+import type { CustomReportColumn, CustomReportTemplate } from '../types';
 
 interface CustomReportTermRecord {
   ca1Score?: number | null;
   ca2Score?: number | null;
   examScore?: number | null;
+}
+
+export function getCustomReportSectionIds(
+  template: Pick<CustomReportTemplate, 'sectionId' | 'sectionIds'>,
+  availableSectionIds?: readonly number[]
+): number[] {
+  const templateSectionIds = template.sectionIds?.length
+    ? template.sectionIds
+    : [template.sectionId];
+  return availableSectionIds
+    ? templateSectionIds.filter(sectionId => availableSectionIds.includes(sectionId))
+    : [...templateSectionIds];
 }
 
 export function resolveCustomReportColumnScore(

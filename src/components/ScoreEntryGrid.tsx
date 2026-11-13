@@ -16,7 +16,10 @@ import {
   resolveExpandedCaComponentScores,
   StudentSortMode
 } from '../utils/academicCalculations';
-import { resolveCustomReportColumnScore } from '../utils/customReportEngine';
+import {
+  getCustomReportSectionIds,
+  resolveCustomReportColumnScore
+} from '../utils/customReportEngine';
 import {
   hasAllSubjectsClearance,
   getTeacherAssignedSubjectIdsForSection
@@ -217,23 +220,62 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
 
   const sectionCustomTemplates = useMemo(
     () => customReportTemplates.filter(template =>
-      (template.sectionIds?.length ? template.sectionIds : [template.sectionId])
-        .includes(selectedSectionId)
+      getCustomReportSectionIds(template).includes(selectedSectionId)
     ),
     [customReportTemplates, selectedSectionId]
   );
+  const availableCustomTemplates = useMemo(
+    () => customReportTemplates.filter(template =>
+      getCustomReportSectionIds(template, classSections.map(section => section.id)).length > 0
+    ),
+    [classSections, customReportTemplates]
+  );
   const activeCustomTemplate = useMemo(
-    () => sectionCustomTemplates.find(template => template.id === selectedCustomTemplateId)
-      || sectionCustomTemplates[0],
-    [sectionCustomTemplates, selectedCustomTemplateId]
+    () => availableCustomTemplates.find(template => template.id === selectedCustomTemplateId)
+      || sectionCustomTemplates[0]
+      || availableCustomTemplates[0],
+    [availableCustomTemplates, sectionCustomTemplates, selectedCustomTemplateId]
+  );
+  const activeCustomSectionIds = useMemo(
+    () => activeCustomTemplate
+      ? getCustomReportSectionIds(
+          activeCustomTemplate,
+          classSections.map(section => section.id)
+        )
+      : [],
+    [activeCustomTemplate, classSections]
+  );
+  const customClassSections = useMemo(
+    () => activeCustomTemplate
+      ? classSections.filter(section => activeCustomSectionIds.includes(section.id))
+      : classSections,
+    [activeCustomSectionIds, activeCustomTemplate, classSections]
   );
 
   useEffect(() => {
-    if (!sectionCustomTemplates.some(template => template.id === selectedCustomTemplateId)) {
-      setSelectedCustomTemplateId(sectionCustomTemplates[0]?.id || '');
+    if (!availableCustomTemplates.some(template => template.id === selectedCustomTemplateId)) {
+      setSelectedCustomTemplateId(
+        sectionCustomTemplates[0]?.id || availableCustomTemplates[0]?.id || ''
+      );
     }
     setCustomScoreErrors({});
-  }, [sectionCustomTemplates, selectedCustomTemplateId]);
+  }, [availableCustomTemplates, sectionCustomTemplates, selectedCustomTemplateId]);
+  useEffect(() => {
+    if (
+      ledgerMode === 'custom_report' &&
+      activeCustomTemplate &&
+      !activeCustomSectionIds.includes(selectedSectionId) &&
+      activeCustomSectionIds.length > 0
+    ) {
+      setSelectedSectionId(activeCustomSectionIds[0]);
+    }
+  }, [
+    activeCustomSectionIds,
+    activeCustomTemplate,
+    ledgerMode,
+    selectedSectionId,
+    setSelectedSectionId
+  ]);
 
   const customReportSubjects = useMemo(
     () => activeCustomTemplate
@@ -241,6 +283,16 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       : [],
     [activeCustomTemplate, availableSubjects]
   );
+  const activeCustomSubject = useMemo(
+    () => customReportSubjects.find(subject => subject.id === selectedSubjectId)
+      || customReportSubjects[0],
+    [customReportSubjects, selectedSubjectId]
+  );
+  useEffect(() => {
+    if (activeCustomSubject && activeCustomSubject.id !== selectedSubjectId) {
+      setSelectedSubjectId(activeCustomSubject.id);
+    }
+  }, [activeCustomSubject, selectedSubjectId, setSelectedSubjectId]);
   const customReportTotalMax = useMemo(
     () => (activeCustomTemplate?.columns || []).reduce(
       (total, column) => total + Math.max(0, Number(column.maxScore) || 0),
@@ -290,43 +342,37 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
   }, [sectionStudents, searchQuery, studentSortMode]);
 
   const customReportRows = useMemo(() => {
-    if (!activeCustomTemplate) return [];
+    if (!activeCustomTemplate || !activeCustomSubject) return [];
     return filteredStudents.map(student => {
-      const studentRows = customReportSubjects
-        .filter(subject => {
-          if (currentSection.levelType === 'JUNIOR') return true;
-          const enrollment = customEnrollmentLookup.get(
-            `${student.id}_${subject.id}_${selectedSectionId}`
-          );
-          return enrollment ? enrollment.isIncluded : true;
-        })
-        .map(subject => {
-          const termRecord = customTermRecordLookup.get(`${student.id}_${subject.id}`);
-          const customScores = activeCustomTemplate.studentCustomScores?.[
-            `${student.id}_${subject.id}`
-          ];
-          const columnScores = activeCustomTemplate.columns.map(column => ({
-            column,
-            score: resolveCustomReportColumnScore(column, customScores, termRecord)
-          }));
-          const total = Number(columnScores.reduce((sum, item) => sum + item.score, 0).toFixed(1));
-          const percentage = customReportTotalMax > 0
-            ? Number(((total / customReportTotalMax) * 100).toFixed(1))
-            : 0;
-          const grade = determineGrade(
-            percentage,
-            currentSection.levelType,
-            customReportGradingBands
-          );
-          return { subject, columnScores, total, percentage, grade };
-        });
+      const subject = activeCustomSubject;
+      const enrollment = customEnrollmentLookup.get(
+        `${student.id}_${subject.id}_${selectedSectionId}`
+      );
+      const included = currentSection.levelType === 'JUNIOR' || !enrollment || enrollment.isIncluded;
+      const termRecord = customTermRecordLookup.get(`${student.id}_${subject.id}`);
+      const customScores = activeCustomTemplate.studentCustomScores?.[
+        `${student.id}_${subject.id}`
+      ];
+      const columnScores = activeCustomTemplate.columns.map(column => ({
+        column,
+        score: resolveCustomReportColumnScore(column, customScores, termRecord)
+      }));
+      const total = Number(columnScores.reduce((sum, item) => sum + item.score, 0).toFixed(1));
+      const percentage = customReportTotalMax > 0
+        ? Number(((total / customReportTotalMax) * 100).toFixed(1))
+        : 0;
+      const grade = determineGrade(
+        percentage,
+        currentSection.levelType,
+        customReportGradingBands
+      );
+      const studentRows = [{ subject, columnScores, total, percentage, grade, included }];
       return { student, subjects: studentRows };
     });
   }, [
     activeCustomTemplate,
-    customReportSubjects,
+    activeCustomSubject,
     currentSection.levelType,
-    currentTerm.id,
     filteredStudents,
     customEnrollmentLookup,
     customTermRecordLookup,
@@ -338,6 +384,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
     () => new Map(customReportRows.map(row => [row.student.id, row.subjects])),
     [customReportRows]
   );
+  const customSubjectOptions = customReportSubjects;
 
   const handleCustomReportScoreChange = (
     studentId: number,
@@ -781,7 +828,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                   </div>
                   <div className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-indigo-950 leading-tight">
                     {ledgerMode === 'custom_report'
-                      ? activeCustomTemplate?.title || 'Select a custom report'
+                      ? activeCustomSubject?.name || activeCustomTemplate?.title || 'Select a custom report'
                       : currentSubject.name}
                   </div>
                 </div>
@@ -892,11 +939,11 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                   aria-label="Select custom report sheet"
                   value={activeCustomTemplate?.id || ''}
                   onChange={event => setSelectedCustomTemplateId(event.target.value)}
-                  disabled={!sectionCustomTemplates.length}
+                  disabled={!availableCustomTemplates.length}
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-xs font-bold text-white disabled:opacity-60"
                 >
-                  {!sectionCustomTemplates.length && <option value="">No custom report sheet for this class</option>}
-                  {sectionCustomTemplates.map(template => (
+                  {!availableCustomTemplates.length && <option value="">No custom report sheets available</option>}
+                  {availableCustomTemplates.map(template => (
                     <option key={template.id} value={template.id}>{template.title}</option>
                   ))}
                 </select>
@@ -919,10 +966,23 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
             <select
               aria-label="Select Class Section"
               value={selectedSectionId}
-              onChange={(e) => setSelectedSectionId(Number(e.target.value))}
+              onChange={(e) => {
+                const nextSectionId = Number(e.target.value);
+                setSelectedSectionId(nextSectionId);
+                if (ledgerMode === 'custom_report') {
+                  const matchingTemplate =
+                    activeCustomTemplate &&
+                    getCustomReportSectionIds(activeCustomTemplate).includes(nextSectionId)
+                      ? activeCustomTemplate
+                      : availableCustomTemplates.find(template =>
+                          getCustomReportSectionIds(template).includes(nextSectionId)
+                        );
+                  if (matchingTemplate) setSelectedCustomTemplateId(matchingTemplate.id);
+                }
+              }}
               className="w-full px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
             >
-              {classSections.map(sec => (
+              {(ledgerMode === 'custom_report' ? customClassSections : classSections).map(sec => (
                 <option key={sec.id} value={sec.id}>
                   {sec.name} ({sec.levelType})
                 </option>
@@ -931,20 +991,22 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
           </div>
 
           {/* Subject Selector (Large & Bold, filtered by Teacher Subject Clearance) */}
-          {ledgerMode !== 'custom_report' && <div>
+          <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-indigo-700 mb-1">
-              {fullSubjectClearance
-                ? `All Curriculum Subjects (${availableSubjects.length})`
-                : `Assigned Subjects Only (${availableSubjects.length})`}
+              {ledgerMode === 'custom_report'
+                ? `Custom Report Subjects (${customSubjectOptions.length})`
+                : fullSubjectClearance
+                  ? `All Curriculum Subjects (${availableSubjects.length})`
+                  : `Assigned Subjects Only (${availableSubjects.length})`}
             </label>
             <select
               aria-label="Select Curriculum Subject"
               data-testid="grid-subject-selector"
-              value={currentSubject.id}
+              value={ledgerMode === 'custom_report' ? activeCustomSubject?.id || '' : currentSubject.id}
               onChange={(e) => setSelectedSubjectId(Number(e.target.value))}
               className="w-full px-3 py-2.5 bg-indigo-50/70 border-2 border-indigo-400 rounded-xl text-sm font-black text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer"
             >
-              {availableSubjects.map(sub => (
+              {(ledgerMode === 'custom_report' ? customSubjectOptions : availableSubjects).map(sub => (
                 <option key={sub.id} value={sub.id}>
                   {sub.name} {isSenior ? `(${sub.category})` : ''}
                 </option>
@@ -954,11 +1016,13 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               data-testid="subject-clearance-badge"
               className="text-[10px] font-semibold text-slate-500 mt-1"
             >
-              {fullSubjectClearance
-                ? 'Executive Clearance: Viewing all subjects across all classes'
-                : `Teacher Restriction: Showing only subjects assigned to @${currentUser.username || currentUser.fullName}`}
+              {ledgerMode === 'custom_report'
+                ? `Custom report subjects filtered by ${fullSubjectClearance ? 'executive clearance' : `@${currentUser.username || currentUser.fullName}'s subject assignments`}`
+                : fullSubjectClearance
+                  ? 'Executive Clearance: Viewing all subjects across all classes'
+                  : `Teacher Restriction: Showing only subjects assigned to @${currentUser.username || currentUser.fullName}`}
             </div>
-          </div>}
+          </div>
 
           {/* Student Search */}
           <div>
@@ -1207,9 +1271,24 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                           <section key={row.subject.id} className="rounded-xl border border-amber-200 bg-amber-50/40 p-3">
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <h4 className="text-xs font-black uppercase text-slate-800">{row.subject.name}</h4>
-                              <span className="text-[10px] font-bold text-slate-600">
-                                {row.total.toFixed(1)} / {customReportTotalMax} · {row.percentage.toFixed(1)}% · {row.grade.grade}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                {isSenior && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSubjectInclusion(st.id, row.subject.id, !row.included)}
+                                    className={`rounded-lg px-2 py-1 text-[10px] font-bold ${
+                                      row.included ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    {row.included ? 'Included' : 'Excluded'}
+                                  </button>
+                                )}
+                                <span className="text-[10px] font-bold text-slate-600">
+                                  {row.included
+                                    ? `${row.total.toFixed(1)} / ${customReportTotalMax} · ${row.percentage.toFixed(1)}% · ${row.grade.grade}`
+                                    : 'Excluded'}
+                                </span>
+                              </div>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                               {row.columnScores.map(({ column, score }) => {
@@ -1226,7 +1305,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                                       step="0.1"
                                       min={0}
                                       max={column.maxScore}
-                                      disabled={Boolean(st.isRecordSealed)}
+                                      disabled={!row.included || Boolean(st.isRecordSealed)}
                                       value={score}
                                       onChange={event => handleCustomReportScoreChange(
                                         st.id,
@@ -1578,7 +1657,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                     <th className="w-12 px-3 py-3 text-center">S/N</th>
                     <th className="px-3 py-3">Adm. No</th>
                     <th className="min-w-[180px] px-3 py-3">Student</th>
-                    <th className="min-w-[130px] px-3 py-3">Subject</th>
+                    {isSenior && <th className="w-24 px-2 py-3 text-center">Include</th>}
                     {activeCustomTemplate.columns.map(column => (
                       <th key={column.id} className="min-w-[120px] px-2 py-3 text-center">
                         <div>{column.header}</div>
@@ -1592,22 +1671,41 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {customReportRows.flatMap((studentRow, studentIndex) =>
-                    studentRow.subjects.map((row, subjectIndex) => (
+                  {customReportRows.map((studentRow, studentIndex) =>
+                    studentRow.subjects.map(row => (
                       <tr
                         key={`${studentRow.student.id}-${row.subject.id}`}
-                        className="hover:bg-amber-50/40"
+                        className={`${row.included ? 'hover:bg-amber-50/40' : 'bg-slate-50/70 opacity-70'}`}
                       >
                         <td className="px-3 py-2 text-center font-mono text-slate-400">
-                          {subjectIndex === 0 ? studentIndex + 1 : ''}
+                          {studentIndex + 1}
                         </td>
                         <td className="px-3 py-2 font-mono text-slate-600">
-                          {subjectIndex === 0 ? studentRow.student.admissionNumber : ''}
+                          {studentRow.student.admissionNumber}
                         </td>
                         <td className="px-3 py-2 font-semibold text-slate-900">
-                          {subjectIndex === 0 ? studentRow.student.fullName : ''}
+                          {studentRow.student.fullName}
                         </td>
-                        <td className="px-3 py-2 font-bold text-slate-700">{row.subject.name}</td>
+                        {isSenior && (
+                          <td className="px-2 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => toggleSubjectInclusion(
+                                studentRow.student.id,
+                                row.subject.id,
+                                !row.included
+                              )}
+                              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold ${
+                                row.included
+                                  ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {row.included ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                              {row.included ? 'Yes' : 'No'}
+                            </button>
+                          </td>
+                        )}
                         {row.columnScores.map(({ column, score }) => {
                           const errorKey = `${studentRow.student.id}-${row.subject.id}-${column.id}`;
                           const error = customScoreErrors[errorKey];
@@ -1619,7 +1717,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                                 step="0.1"
                                 min={0}
                                 max={column.maxScore}
-                                disabled={Boolean(studentRow.student.isRecordSealed)}
+                                disabled={!row.included || Boolean(studentRow.student.isRecordSealed)}
                                 value={score}
                                 onChange={event => handleCustomReportScoreChange(
                                   studentRow.student.id,
@@ -1647,16 +1745,14 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                         </td>
                         <td className="px-3 py-2 text-center font-black">{row.grade.grade}</td>
                         <td className="px-3 py-2 text-center">
-                          {subjectIndex === 0 && (
-                            <button
-                              type="button"
-                              onClick={() => onViewReportCard(studentRow.student.id)}
-                              title="Open student report"
-                              className="rounded-lg p-1.5 text-indigo-600 hover:bg-indigo-50"
-                            >
-                              <ExternalLink className="h-4 w-4" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => onViewReportCard(studentRow.student.id)}
+                            title="Open student report"
+                            className="rounded-lg p-1.5 text-indigo-600 hover:bg-indigo-50"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </button>
                         </td>
                       </tr>
                     ))
