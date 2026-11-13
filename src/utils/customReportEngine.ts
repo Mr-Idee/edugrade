@@ -18,6 +18,13 @@ export function getCustomReportSectionIds(
     : [...templateSectionIds];
 }
 
+export function getCustomReportTemplatesForSection<T extends Pick<CustomReportTemplate, 'sectionId' | 'sectionIds'>>(
+  templates: T[],
+  sectionId: number
+): T[] {
+  return templates.filter(template => getCustomReportSectionIds(template).includes(sectionId));
+}
+
 export function resolveCustomReportColumnScore(
   column: CustomReportColumn,
   customScores: Record<string, number | null | undefined> | undefined,
@@ -39,6 +46,21 @@ export function resolveCustomReportColumnScore(
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return 0;
   return Number(Math.min(column.maxScore, Math.max(0, numericValue)).toFixed(1));
+}
+
+export function resolveCustomReportColumnEntryValue(
+  column: CustomReportColumn,
+  customScores: Record<string, number | null | undefined> | undefined,
+  termRecord: CustomReportTermRecord | undefined
+): number | '' {
+  const hasSavedOverride = Boolean(
+    customScores &&
+    Object.prototype.hasOwnProperty.call(customScores, column.id) &&
+    customScores[column.id] !== null &&
+    customScores[column.id] !== undefined
+  );
+  if (column.sourceKey === 'custom' && !hasSavedOverride) return '';
+  return resolveCustomReportColumnScore(column, customScores, termRecord);
 }
 
 export function mergeScopedCustomReportScores(

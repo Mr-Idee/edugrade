@@ -11,7 +11,10 @@ import {
   resolveActiveGradingScaleBands,
   getReportCardGradingScaleDisplay
 } from '../utils/academicCalculations';
-import { resolveCustomReportColumnScore } from '../utils/customReportEngine';
+import {
+  resolveCustomReportColumnEntryValue,
+  resolveCustomReportColumnScore
+} from '../utils/customReportEngine';
 import {
   DEFAULT_INSTITUTION_LOGO_DATA_URI,
   resolveInstitutionLogoUrl
@@ -28,7 +31,9 @@ import {
   CheckCircle2,
   UserCheck,
   Palette,
-  ExternalLink
+  ExternalLink,
+  Edit2,
+  ArrowLeft
 } from 'lucide-react';
 
 const COLOR_BAR_THEMES: Record<
@@ -79,6 +84,7 @@ export const CustomReportSheetView: React.FC = () => {
     termSubjectRecords,
     customReportTemplates,
     saveCustomReportTemplate,
+    deleteCustomReportTemplate,
     toggleCustomReportInReportTab,
     updateStudentCustomReportScore,
     gradingScalePresets
@@ -87,7 +93,11 @@ export const CustomReportSheetView: React.FC = () => {
   const [selectedSectionId, setSelectedSectionId] = useState<number>(
     classSections[0]?.id || 1
   );
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
+  const [newTemplateId, setNewTemplateId] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
+  const isBuilderOpen = isCreatingTemplate || selectedTemplateId !== null;
 
   const activeSection = useMemo(
     () => classSections.find(s => s.id === selectedSectionId) || classSections[0],
@@ -105,7 +115,7 @@ export const CustomReportSheetView: React.FC = () => {
   }, [subjects, activeSection]);
 
   const currentTemplate = useMemo((): CustomReportTemplate => {
-    const found = customReportTemplates.find(t => t.sectionId === selectedSectionId);
+    const found = customReportTemplates.find(t => t.id === selectedTemplateId);
     if (found) {
       return {
         ...found,
@@ -118,7 +128,7 @@ export const CustomReportSheetView: React.FC = () => {
     }
     const isJunior = activeSection?.levelType === 'JUNIOR';
     return {
-      id: `custom-report-sec-${selectedSectionId}`,
+      id: isCreatingTemplate ? newTemplateId : `custom-report-draft-${selectedSectionId}`,
       sectionId: selectedSectionId,
       sectionIds: [selectedSectionId],
       title: `${activeSection?.name || 'Class'} Custom Report Card`,
@@ -141,7 +151,15 @@ export const CustomReportSheetView: React.FC = () => {
       studentCustomScores: {},
       updatedAt: new Date().toISOString()
     };
-  }, [customReportTemplates, selectedSectionId, activeSection, applicableSubjects]);
+  }, [
+    customReportTemplates,
+    selectedTemplateId,
+    isCreatingTemplate,
+    newTemplateId,
+    selectedSectionId,
+    activeSection,
+    applicableSubjects
+  ]);
 
   const [title, setTitle] = useState(currentTemplate.title);
   const [subtitle, setSubtitle] = useState(currentTemplate.subtitle);
@@ -159,7 +177,7 @@ export const CustomReportSheetView: React.FC = () => {
     Boolean(currentTemplate.enabledInReportTab)
   );
 
-  // Sync draft state when switching primary class template
+  // Load saved settings only when opening a different report.
   useEffect(() => {
     setTitle(currentTemplate.title);
     setSubtitle(currentTemplate.subtitle);
@@ -172,7 +190,7 @@ export const CustomReportSheetView: React.FC = () => {
     );
     setColorBarTheme(currentTemplate.colorBarTheme || 'EMERALD');
     setEnabledInReportTab(Boolean(currentTemplate.enabledInReportTab));
-  }, [currentTemplate]);
+  }, [currentTemplate.id]);
 
   // Students belonging to the classes assigned to this custom report card
   const eligibleStudents = useMemo(() => {
@@ -225,6 +243,8 @@ export const CustomReportSheetView: React.FC = () => {
       studentCustomScores: currentTemplate.studentCustomScores || {},
       updatedAt: new Date().toISOString()
     });
+    setSelectedTemplateId(currentTemplate.id);
+    setIsCreatingTemplate(false);
     setEnabledInReportTab(nextEnabled);
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 2500);
@@ -295,6 +315,39 @@ export const CustomReportSheetView: React.FC = () => {
     setSelectedSectionIds([selectedSectionId]);
   };
 
+  const handleCreateTemplate = () => {
+    const firstSection = classSections[0];
+    if (!firstSection) return;
+    setSelectedSectionId(firstSection.id);
+    setSelectedTemplateId(null);
+    setNewTemplateId(`custom-report-${Date.now()}`);
+    setIsCreatingTemplate(true);
+    setSavedNotice(false);
+  };
+
+  const handleEditTemplate = (template: CustomReportTemplate) => {
+    setSelectedSectionId(template.sectionId);
+    setNewTemplateId('');
+    setIsCreatingTemplate(false);
+    setSelectedTemplateId(template.id);
+    setSavedNotice(false);
+  };
+
+  const handleDeleteTemplate = (template: CustomReportTemplate) => {
+    if (!window.confirm(`Delete "${template.title}"? This will also remove its custom score entries.`)) return;
+    deleteCustomReportTemplate(template.id);
+    if (selectedTemplateId === template.id) {
+      setSelectedTemplateId(null);
+      setIsCreatingTemplate(false);
+    }
+  };
+
+  const handleReturnToReportList = () => {
+    setSelectedTemplateId(null);
+    setIsCreatingTemplate(false);
+    setSavedNotice(false);
+  };
+
   const totalMaxPossiblePerSubject = useMemo(
     () => columns.reduce((acc, c) => acc + (Number(c.maxScore) || 0), 0),
     [columns]
@@ -330,7 +383,8 @@ export const CustomReportSheetView: React.FC = () => {
           return {
             colId: col.id,
             maxScore: col.maxScore,
-            value: clamped
+            value: clamped,
+            inputValue: resolveCustomReportColumnEntryValue(col, customSubScores, rec)
           };
         });
 
@@ -387,7 +441,90 @@ export const CustomReportSheetView: React.FC = () => {
   }, [previewLevelType, gradingScalePresets, currentTemplate.id]);
 
   return (
-    <div data-testid="custom-report-sheet-builder" className="space-y-6">
+    <div className="space-y-6">
+      <section
+        data-testid="saved-custom-report-list"
+        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm print:hidden"
+      >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-black text-slate-900">Saved Custom Reports</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Review, edit, or remove saved report sheets and their assigned classes.
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="create-custom-report-btn"
+            onClick={handleCreateTemplate}
+            disabled={!classSections.length}
+            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+            Create Custom Report
+          </button>
+        </div>
+
+        {customReportTemplates.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-300 p-4 text-xs text-slate-500">
+            No saved custom reports yet. Create a report sheet to configure its classes, subjects, and score sources.
+          </p>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {customReportTemplates.map(template => {
+              const sectionIds = template.sectionIds?.length
+                ? template.sectionIds
+                : [template.sectionId];
+              const sectionNames = sectionIds
+                .map(sectionId => classSections.find(section => section.id === sectionId)?.name)
+                .filter((name): name is string => Boolean(name));
+              const isSelected = selectedTemplateId === template.id;
+              return (
+                <article
+                  key={template.id}
+                  className={`rounded-xl border p-4 ${
+                    isSelected ? 'border-indigo-400 bg-indigo-50/50' : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="truncate text-sm font-black text-slate-900">{template.title}</h4>
+                      <p className="mt-1 text-[11px] text-slate-600">
+                        Classes: {sectionNames.length ? sectionNames.join(', ') : 'No available class assigned'}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        {template.selectedSubjectIds.length} subject(s) · {template.columns.length} score column(s)
+                        {template.enabledInReportTab ? ' · Enabled in Reports' : ''}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        aria-label={`Edit ${template.title}`}
+                        onClick={() => handleEditTemplate(template)}
+                        className="rounded-lg border border-indigo-200 bg-white p-2 text-indigo-700 hover:bg-indigo-50"
+                      >
+                        <Edit2 className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${template.title}`}
+                        onClick={() => handleDeleteTemplate(template)}
+                        className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700 hover:bg-rose-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {isBuilderOpen && (
+      <div data-testid="custom-report-sheet-builder" className="space-y-6">
       {/* Builder Configuration Panel (Hidden when printing) */}
       <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-5 print:hidden">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-slate-200 pb-4">
@@ -406,6 +543,14 @@ export const CustomReportSheetView: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleReturnToReportList}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Saved Reports
+            </button>
             {/* Button to Add or Remove from Report Cards & Transcripts Tab */}
             <button
               type="button"
@@ -659,6 +804,9 @@ export const CustomReportSheetView: React.FC = () => {
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-0.5">
                       Score Source
                     </label>
+                    <p className="mb-1 text-[9px] leading-relaxed text-slate-500">
+                      Import a score from the current term or leave this column blank for custom entry.
+                    </p>
                     <select
                       value={col.sourceKey}
                       onChange={(e) =>
@@ -668,10 +816,10 @@ export const CustomReportSheetView: React.FC = () => {
                       }
                       className="w-full px-2 py-1.5 text-xs font-semibold border border-slate-300 rounded-lg bg-white text-slate-800"
                     >
-                      <option value="ca1">1st CA Record</option>
-                      <option value="ca2">2nd CA Record</option>
-                      <option value="exam">Exam Record</option>
-                      <option value="custom">Custom Score Input</option>
+                      <option value="ca1">Import current 1st CA score</option>
+                      <option value="ca2">Import current 2nd CA score</option>
+                      <option value="exam">Import current exam score</option>
+                      <option value="custom">Blank custom entry</option>
                     </select>
                   </div>
                 </div>
@@ -887,14 +1035,14 @@ export const CustomReportSheetView: React.FC = () => {
                             max={cell.maxScore}
                             step="0.5"
                             disabled={Boolean(previewStudent.isRecordSealed)}
-                            value={cell.value}
+                            value={cell.inputValue}
                             onChange={(e) =>
                               updateStudentCustomReportScore(
                                 currentTemplate.id,
                                 previewStudent.id,
                                 row.subject.id,
                                 cell.colId,
-                                Number(e.target.value) || 0
+                                e.target.value.trim() ? Number(e.target.value) : null
                               )
                             }
                             className="w-16 text-center font-mono font-bold border border-slate-300 rounded px-1 py-0.5 bg-white print:border-none"
@@ -967,6 +1115,8 @@ export const CustomReportSheetView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      </div>
       )}
     </div>
   );

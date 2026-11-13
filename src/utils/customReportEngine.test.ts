@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getCustomReportSectionIds,
+  getCustomReportTemplatesForSection,
   mergeScopedCustomReportScores,
+  resolveCustomReportColumnEntryValue,
   resolveCustomReportColumnScore
 } from './customReportEngine.ts';
 
@@ -11,6 +13,21 @@ test('custom report classes are restricted to explicitly configured sections', (
   assert.deepEqual(getCustomReportSectionIds(template, [2, 3, 4]), [2, 4]);
   assert.deepEqual(getCustomReportSectionIds(template, [3]), []);
   assert.deepEqual(getCustomReportSectionIds({ sectionId: 5, sectionIds: [] }), [5]);
+});
+
+test('custom report selector only lists sheets configured for the selected class', () => {
+  const templates = [
+    { id: 'report-a', sectionId: 2, sectionIds: [2, 4] },
+    { id: 'report-b', sectionId: 3, sectionIds: [3] }
+  ];
+  assert.deepEqual(
+    getCustomReportTemplatesForSection(templates, 4).map(template => template.id),
+    ['report-a']
+  );
+  assert.deepEqual(
+    getCustomReportTemplatesForSection(templates, 3).map(template => template.id),
+    ['report-b']
+  );
 });
 
 test('custom report score uses a saved override before its configured source', () => {
@@ -30,6 +47,26 @@ test('custom report score uses the configured default when no override or source
   const column = { id: 'project', header: 'Project', maxScore: 10, sourceKey: 'custom' as const, defaultValue: 3 };
   assert.equal(resolveCustomReportColumnScore(column, undefined, undefined), 3);
   assert.equal(resolveCustomReportColumnScore({ ...column, defaultValue: undefined }, undefined, undefined), 0);
+});
+
+test('custom report custom-entry columns stay blank until a score is entered', () => {
+  const column = {
+    id: 'project',
+    header: 'Project',
+    maxScore: 10,
+    sourceKey: 'custom' as const,
+    defaultValue: 0
+  };
+  assert.equal(resolveCustomReportColumnEntryValue(column, undefined, undefined), '');
+  assert.equal(resolveCustomReportColumnEntryValue(column, { project: 0 }, undefined), 0);
+  assert.equal(
+    resolveCustomReportColumnEntryValue(
+      { ...column, sourceKey: 'ca1' },
+      undefined,
+      { ca1Score: 12 }
+    ),
+    10
+  );
 });
 
 test('scoped custom report score updates preserve and reject out-of-scope records', () => {
