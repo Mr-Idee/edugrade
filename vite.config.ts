@@ -37,7 +37,7 @@ export default defineConfig(({ command, mode }) => {
       'import.meta.env.SUPABASE_PUBLISHABLE_KEY': JSON.stringify(env.SUPABASE_PUBLISHABLE_KEY || '')
     },
     plugins: [
-      react(),
+      react({ jsxRuntime: 'classic' }),
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
