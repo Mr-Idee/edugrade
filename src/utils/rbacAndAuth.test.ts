@@ -225,6 +225,59 @@ test('Bulk CSV Import: Parses include=true/false and identifies unregistered/ext
   assert.equal(enrollmentAnalysis.requiresEnrollmentModal, true);
 });
 
+test('Bulk CSV Import: reads Gender without shifting scores and leaves blank gender unset', () => {
+  const student: Student = {
+    id: 1,
+    admissionNumber: 'OLD-1',
+    fullName: 'Student One',
+    currentSectionId: 7,
+    gender: 'MALE'
+  };
+  const subject: Subject = {
+    id: 1,
+    name: 'ENGLISH LANGUAGE',
+    code: 'ENGL',
+    category: 'CORE'
+  };
+  const components: AssessmentComponent[] = [
+    { id: 1, termId: 1, levelType: 'JUNIOR', name: 'Quiz', shortCode: 'QZ', maxScore: 5, weightOrder: 1 },
+    { id: 2, termId: 1, levelType: 'JUNIOR', name: 'Classwork', shortCode: 'CW', maxScore: 5, weightOrder: 2 }
+  ];
+  const csvText = [
+    'Student Name,Admission Number,Gender,Subject,Include,QZ,CW',
+    '"Student One","NEW-1","FEMALE","ENGLISH LANGUAGE",true,2.5,4',
+    '"Student Two","NEW-2","","ENGLISH LANGUAGE",true,3,1.5'
+  ].join('\n');
+
+  const parsed = parseBulkCsvWithSubjectInclusion({
+    csvText,
+    students: [student],
+    subjects: [subject],
+    defaultSubject: subject,
+    components,
+    levelType: 'JUNIOR'
+  });
+
+  assert.equal(parsed[0].isExisting, true);
+  assert.equal(parsed[0].gender, 'FEMALE');
+  assert.equal(parsed[0].hasGenderColumn, true);
+  assert.deepEqual(parsed[0].subjectScores[0].scores, { 1: 2.5, 2: 4 });
+  assert.equal(parsed[1].gender, undefined);
+  assert.equal(parsed[1].hasGenderColumn, true);
+
+  assert.throws(
+    () => parseBulkCsvWithSubjectInclusion({
+      csvText: 'Student Name,Admission Number,Gender,Subject,QZ\n"Student One","OLD-1","UNKNOWN","ENGLISH LANGUAGE",2',
+      students: [student],
+      subjects: [subject],
+      defaultSubject: subject,
+      components,
+      levelType: 'JUNIOR'
+    }),
+    /invalid Gender/
+  );
+});
+
 test('Clean Slate Initial Scores: All student scores across all terms start empty for fresh local server publish', () => {
   assert.equal(initialAssessmentScores.length, 0);
   assert.equal(initialTermSummaries.length, 0);

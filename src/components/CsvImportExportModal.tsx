@@ -49,6 +49,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
     updateScore,
     toggleSubjectInclusion,
     addStudent,
+    updateStudent,
     addSubject,
     syncToBackend,
     subjects
@@ -91,7 +92,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
       if (cancelled) return;
 
       const scoreErrorSummary = pendingImportSave.scoreErrors.length > 0
-        ? ` ${pendingImportSave.scoreErrors.length} score(s) were rejected: ${pendingImportSave.scoreErrors.slice(0, 3).join('; ')}${pendingImportSave.scoreErrors.length > 3 ? `; and ${pendingImportSave.scoreErrors.length - 3} more` : ''}.`
+        ? ` ${pendingImportSave.scoreErrors.length} import issue(s): ${pendingImportSave.scoreErrors.slice(0, 3).join('; ')}${pendingImportSave.scoreErrors.length > 3 ? `; and ${pendingImportSave.scoreErrors.length - 3} more` : ''}.`
         : '';
       const saveSummary = result.savedToDatabase
         ? `Saved ${pendingImportSave.savedScoreCount} score(s) to Supabase PostgreSQL.`
@@ -118,6 +119,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
     const headers = [
       'Student Name',
       'Admission Number',
+      'Gender',
       'Subject',
       'Include (true/false)',
       ...components.map(c => `${c.shortCode} (Max ${c.maxScore})`)
@@ -134,6 +136,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
       const rowVals: string[] = [
         `"${st.fullName}"`,
         `"${st.admissionNumber}"`,
+        `"${st.gender}"`,
         `"${subject.name}"`,
         `include=${isIncluded ? 'true' : 'false'}`
       ];
@@ -167,15 +170,16 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
     const headers = [
       'Student Name',
       'Admission Number',
+      'Gender',
       'Subject',
       'Include',
       ...components.map(c => c.shortCode)
     ];
     const sampleRows = [
       headers.join(','),
-      `"Sample Student One","STU-2026-0401","${subject.name}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`,
-      `"Sample Student One","STU-2026-0401","MATHEMATICS",include=true,${components.map(c => Math.min(c.maxScore, 4.5)).join(',')}`,
-      `"Sample Student Two","STU-2026-0402","${subject.name}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`
+      `"Sample Student One","STU-2026-0401","MALE","${subject.name}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`,
+      `"Sample Student One","STU-2026-0401","MALE","MATHEMATICS",include=true,${components.map(c => Math.min(c.maxScore, 4.5)).join(',')}`,
+      `"Sample Student Two","STU-2026-0402","FEMALE","${subject.name}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`
     ];
 
     const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(sampleRows.join('\n'));
@@ -189,13 +193,13 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
 
   // Load sample rows for active subject with include=true/false directly into textarea
   const handleLoadActiveSubjectSample = () => {
-    const headers = ['Student Name', 'Admission Number', 'Subject', 'Include', ...components.map(c => c.shortCode)];
+    const headers = ['Student Name', 'Admission Number', 'Gender', 'Subject', 'Include', ...components.map(c => c.shortCode)];
     const sampleStudents = students.slice(0, 3);
     const lines = [
       headers.join(','),
       ...sampleStudents.map((st, idx) => {
         const incFlag = idx === 2 && section.levelType === 'SENIOR' ? 'include=false' : 'include=true';
-        return `"${st.fullName}","${st.admissionNumber}","${subject.name}",${incFlag},${components.map(c => Math.min(c.maxScore, 4)).join(',')}`;
+        return `"${st.fullName}","${st.admissionNumber}","${st.gender}","${subject.name}",${incFlag},${components.map(c => Math.min(c.maxScore, 4)).join(',')}`;
       })
     ];
     setCsvText(lines.join('\n'));
@@ -203,7 +207,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
 
   // Load full class CSV + 2 extra unregistered students (triggers Unregistered Student Enrollment Modal)
   const handleLoadExtraStudentsSample = () => {
-    const headers = ['Student Name', 'Admission Number', 'Subject', 'Include', ...components.map(c => c.shortCode)];
+    const headers = ['Student Name', 'Admission Number', 'Gender', 'Subject', 'Include', ...components.map(c => c.shortCode)];
     const registeredRows = students.map((st, idx) => {
       const incFlag = 'include=true';
       const scoresList = components.map(c =>
@@ -211,14 +215,14 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
           ? Math.min(c.maxScore, 14 + (idx % 6))
           : Math.min(c.maxScore, 3 + (idx % 3))
       );
-      return `"${st.fullName}","${st.admissionNumber}","${subject.name}",${incFlag},${scoresList.join(',')}`;
+      return `"${st.fullName}","${st.admissionNumber}","${st.gender}","${subject.name}",${incFlag},${scoresList.join(',')}`;
     });
 
     const extraRows = [
-      `"Sample Student One","STU-2026-9901","${subject.name}",include=true,${components
+      `"Sample Student One","STU-2026-9901","MALE","${subject.name}",include=true,${components
         .map(c => (c.shortCode.toUpperCase() === 'TEST' ? Math.min(c.maxScore, 18) : Math.min(c.maxScore, 4.5)))
         .join(',')}`,
-      `"Sample Student Two","STU-2026-9902","${subject.name}",include=true,${components
+      `"Sample Student Two","STU-2026-9902","FEMALE","${subject.name}",include=true,${components
         .map(c => (c.shortCode.toUpperCase() === 'TEST' ? Math.min(c.maxScore, 17) : Math.min(c.maxScore, 4)))
         .join(',')}`
     ];
@@ -244,17 +248,26 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
   const handleParseCsv = () => {
     if (!csvText.trim()) return;
 
-    const groups = parseBulkCsvWithSubjectInclusion({
-      csvText,
-      students,
-      subjects,
-      defaultSubject: subject,
-      components,
-      defaultInclude: defaultIncludeSelectedSubject,
-      levelType: section.levelType
-    });
+    let groups: ParsedCsvStudentGroup[];
+    try {
+      groups = parseBulkCsvWithSubjectInclusion({
+        csvText,
+        students,
+        subjects,
+        defaultSubject: subject,
+        components,
+        defaultInclude: defaultIncludeSelectedSubject,
+        levelType: section.levelType
+      });
+    } catch (error) {
+      setHasImportErrors(true);
+      setImportNotice(error instanceof Error ? error.message : 'Unable to parse the CSV file.');
+      return;
+    }
 
     setParsedGroups(groups);
+    setHasImportErrors(false);
+    setImportNotice(null);
 
     const analysis = analyzeCsvEnrollmentRequirements(groups, students);
     setEnrollmentAnalysis(analysis);
@@ -377,6 +390,10 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
       let enrollmentIdsBySubject = new Map<number, number>();
 
       if (group.decision === 'NEW' || !group.existingStudent) {
+        if (group.hasGenderColumn && !group.gender) {
+          scoreErrors.push(`${group.name}: Gender is blank; student was not enrolled or imported.`);
+          return;
+        }
         const newSt = addStudent({
           fullName: group.name.trim(),
           admissionNumber:
@@ -394,6 +411,21 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
         newlyEnrolledCount++;
       } else {
         targetStudentId = group.existingStudent.id;
+        if (group.decision === 'OVERWRITE') {
+          const studentUpdates: Partial<Student> = {};
+          const name = group.name.trim();
+          const admissionNumber = group.admissionNumber.trim();
+          if (name && name !== group.existingStudent.fullName) studentUpdates.fullName = name;
+          if (admissionNumber && admissionNumber !== group.existingStudent.admissionNumber) {
+            studentUpdates.admissionNumber = admissionNumber;
+          }
+          if (group.gender && group.gender !== group.existingStudent.gender) {
+            studentUpdates.gender = group.gender;
+          }
+          if (Object.keys(studentUpdates).length > 0) {
+            updateStudent(group.existingStudent.id, studentUpdates);
+          }
+        }
         updatedExistingCount++;
       }
 
@@ -597,7 +629,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
                 Paste or Upload CSV Data (Detects Unregistered / Extra Students Automatically)
               </label>
               <span className="text-[11px] font-mono text-slate-500">
-                Cols: Name, AdmNo, Subject, Include (true/false), {components.map(c => c.shortCode).join(', ')}
+                Cols: Name, AdmNo, Gender (optional), Subject, Include (true/false), {components.map(c => c.shortCode).join(', ')}
               </span>
             </div>
             <textarea
@@ -605,7 +637,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
               rows={5}
               value={csvText}
               onChange={(e) => setCsvText(e.target.value)}
-              placeholder={`Student Name,Admission Number,Subject,Include,${components.map(c => c.shortCode).join(',')}\n"Sample Student One","STU-2026-0401","${subject.name}",include=true,${components.map(() => '4.0').join(',')}\n"Sample Student Two","STU-2026-0402","${subject.name}",include=false,${components.map(() => '0.0').join(',')}`}
+              placeholder={`Student Name,Admission Number,Gender,Subject,Include,${components.map(c => c.shortCode).join(',')}\n"Sample Student One","STU-2026-0401","MALE","${subject.name}",include=true,${components.map(() => '4.0').join(',')}\n"Sample Student Two","STU-2026-0402","FEMALE","${subject.name}",include=false,${components.map(() => '0.0').join(',')}`}
               className="w-full p-3 font-mono text-xs bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <button
@@ -634,8 +666,11 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
                 <div className="text-slate-600 text-[11px]">
                   Existing Record in System:{' '}
                   <span className="font-semibold">
-                    {currentConflict.existingStudent?.fullName} ({currentConflict.existingStudent?.admissionNumber})
+                    {currentConflict.existingStudent?.fullName} ({currentConflict.existingStudent?.admissionNumber}, {currentConflict.existingStudent?.gender})
                   </span>
+                </div>
+                <div className="text-slate-600 text-[11px]">
+                  Incoming CSV gender: <span className="font-semibold">{currentConflict.gender || 'blank (preserve existing)'}</span>
                 </div>
                 <div className="text-slate-500 text-[11px]">
                   Incoming CSV includes{' '}
@@ -723,6 +758,9 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
                         <span className="font-mono text-[11px] text-slate-400">
                           ({group.admissionNumber})
                         </span>
+                      </div>
+                      <div className="text-[11px] text-slate-600">
+                        Gender: <span className="font-semibold">{group.gender || 'blank (no gender update)'}</span>
                       </div>
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${
@@ -986,7 +1024,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
                             Gender
                           </label>
                           <select
-                            value={candidate.gender || 'MALE'}
+                            value={candidate.gender || ''}
                             onChange={e =>
                               handleUpdateUnregisteredCandidate(gIdx, {
                                 gender: e.target.value as 'MALE' | 'FEMALE'
@@ -994,6 +1032,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
                             }
                             className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-bold text-slate-800"
                           >
+                            <option value="" disabled>Select gender</option>
                             <option value="MALE">MALE</option>
                             <option value="FEMALE">FEMALE</option>
                           </select>

@@ -233,6 +233,7 @@ export interface ParsedCsvStudentGroup {
   name: string;
   admissionNumber: string;
   gender?: 'MALE' | 'FEMALE';
+  hasGenderColumn: boolean;
   isExisting: boolean;
   existingStudent?: Student;
   decision?: 'OVERWRITE' | 'NEW' | 'SKIP';
@@ -401,8 +402,8 @@ export function analyzeCsvEnrollmentRequirements(
 
 /**
  * Parses Bulk CSV text where each row specifies:
- * Format A (with explicit Include column):
- *   Student Name, Admission Number, Subject, Include (true/false or include=true/false), Comp1, Comp2, ...
+ * Format A (with optional Gender and explicit Include columns):
+ *   Student Name, Admission Number, Gender, Subject, Include (true/false or include=true/false), Comp1, Comp2, ...
  * Format B (legacy without Include column, defaults to defaultInclude):
  *   Student Name, Admission Number, Subject, Comp1, Comp2, ...
  */
@@ -435,7 +436,8 @@ export function parseBulkCsvWithSubjectInclusion(params: {
     firstCols[0]?.includes('NAME') ||
     firstCols[1]?.includes('ADM') ||
     firstCols[2]?.includes('SUBJ') ||
-    firstCols[3]?.includes('INCL');
+    firstCols[3]?.includes('INCL') ||
+    firstCols.some(column => column.includes('GENDER'));
 
   const nameColIdx = hasHeader ? Math.max(0, firstCols.findIndex(c => c.includes('NAME'))) : 0;
   const admissionColIdx = hasHeader
@@ -443,6 +445,7 @@ export function parseBulkCsvWithSubjectInclusion(params: {
     : 1;
   const subjectColIdx = hasHeader ? Math.max(0, firstCols.findIndex(c => c.includes('SUBJ'))) : 2;
   const includeColIdx = hasHeader ? firstCols.findIndex(c => c.includes('INCL')) : -1;
+  const genderColIdx = hasHeader ? firstCols.findIndex(c => c.includes('GENDER')) : -1;
 
   const studentGroupMap = new Map<string, ParsedCsvStudentGroup>();
 
@@ -454,6 +457,13 @@ export function parseBulkCsvWithSubjectInclusion(params: {
     if (!rawName) continue;
     const rawAdm = cols[admissionColIdx] || '';
     const rawSub = cols[subjectColIdx] || '';
+    const rawGender = genderColIdx >= 0 ? (cols[genderColIdx] || '').trim().toUpperCase() : '';
+    if (rawGender && rawGender !== 'MALE' && rawGender !== 'FEMALE') {
+      throw new Error(
+        `CSV row ${r + 1} has invalid Gender "${rawGender}"; use MALE, FEMALE, or leave it blank.`
+      );
+    }
+    const csvGender = rawGender ? rawGender as 'MALE' | 'FEMALE' : undefined;
 
     const normKey = `${rawName.trim().replace(/\s+/g, ' ').toUpperCase()}__${rawAdm.trim().toUpperCase()}`;
     let record = studentGroupMap.get(normKey);
@@ -468,7 +478,8 @@ export function parseBulkCsvWithSubjectInclusion(params: {
       record = {
         name: rawName,
         admissionNumber: rawAdm || matchedExisting?.admissionNumber || `STU-2026-${1000 + r}`,
-        gender: matchedExisting?.gender || 'MALE',
+        gender: genderColIdx >= 0 ? csvGender : matchedExisting?.gender || 'MALE',
+        hasGenderColumn: genderColIdx >= 0,
         isExisting: Boolean(matchedExisting),
         existingStudent: matchedExisting,
         decision: matchedExisting ? 'OVERWRITE' : 'NEW',
@@ -476,6 +487,11 @@ export function parseBulkCsvWithSubjectInclusion(params: {
         subjectScores: []
       };
       studentGroupMap.set(normKey, record);
+    } else if (csvGender) {
+      if (record.gender && record.gender !== csvGender) {
+        throw new Error(`CSV has conflicting Gender values for "${rawName.trim()}".`);
+      }
+      record.gender = csvGender;
     }
 
     const targetSub = rawSub
