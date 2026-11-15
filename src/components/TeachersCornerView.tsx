@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   TeacherDocumentCategory,
@@ -299,38 +299,58 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
   const [filterWeek, setFilterWeek] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<'WEEK' | 'TEACHER' | 'SUBJECT' | 'CLASS' | 'DEPARTMENT'>('WEEK');
 
-  // Redis / Write-Through LRU Document Cache Status & Download Banner
+  // Instance-local document cache status & download banner
   const [cacheTelemetry, setCacheTelemetry] = useState<{
     backend: string;
     hits: number;
     misses: number;
     cachedEntries: number;
-    etag: string;
+    cachedBytes: number;
+    bytesServedFromCache: number;
   }>({
-    backend: 'MEMORY_LRU_WRITE_THROUGH',
-    hits: 14,
-    misses: 1,
-    cachedEntries: teacherDocumentUploads.length,
-    etag: 'W/"bhs-doc-cache"'
+    backend: 'VERCEL_INSTANCE_MEMORY_LRU',
+    hits: 0,
+    misses: 0,
+    cachedEntries: 0,
+    cachedBytes: 0,
+    bytesServedFromCache: 0
   });
   const [downloadActionNotice, setDownloadActionNotice] = useState<string | null>(null);
 
+  const refreshDocumentCacheTelemetry = useCallback(async () => {
+    if (currentRole !== 'SUPER_ADMIN') {
+      setCacheTelemetry({
+        backend: 'VERCEL_INSTANCE_MEMORY_LRU',
+        hits: 0,
+        misses: 0,
+        cachedEntries: 0,
+        cachedBytes: 0,
+        bytesServedFromCache: 0
+      });
+      return;
+    }
+    try {
+      const response = await fetch('/api/cache/status', { cache: 'no-store' });
+      if (!response.ok) throw new Error('Could not load document cache telemetry.');
+      const data = await response.json();
+      if (data?.stats) {
+        setCacheTelemetry({
+          backend: data.stats.backend || 'VERCEL_INSTANCE_MEMORY_LRU',
+          hits: Number(data.stats.hits ?? 0),
+          misses: Number(data.stats.misses ?? 0),
+          cachedEntries: Number(data.stats.cachedEntries ?? 0),
+          cachedBytes: Number(data.stats.cachedBytes ?? 0),
+          bytesServedFromCache: Number(data.stats.bytesServedFromCache ?? 0)
+        });
+      }
+    } catch (error) {
+      console.error('Could not refresh document cache telemetry:', error);
+    }
+  }, [currentRole]);
+
   useEffect(() => {
-    fetch('/api/cache/status')
-      .then(r => (r.ok ? r.json() : null))
-      .then(data => {
-        if (data?.stats) {
-          setCacheTelemetry({
-            backend: data.stats.backend || 'MEMORY_LRU_WRITE_THROUGH',
-            hits: Number(data.stats.hits ?? 14),
-            misses: Number(data.stats.misses ?? 1),
-            cachedEntries: Number(data.stats.cachedEntries ?? teacherDocumentUploads.length),
-            etag: data.stats.etag || 'W/"bhs-doc-cache"'
-          });
-        }
-      })
-      .catch(() => {});
-  }, [teacherDocumentUploads.length]);
+    void refreshDocumentCacheTelemetry();
+  }, [refreshDocumentCacheTelemetry, teacherDocumentUploads.length]);
 
   // Executive & HOD Remark input state per document ID
   const [remarkDrafts, setRemarkDrafts] = useState<Record<string, string>>({});
@@ -598,7 +618,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        setCacheTelemetry(prev => ({ ...prev, hits: prev.hits + 1 }));
+        void refreshDocumentCacheTelemetry();
         setDownloadActionNotice(`Downloaded original file "${sortedFileName}".`);
         setTimeout(() => setDownloadActionNotice(null), 4000);
         return;
@@ -640,7 +660,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      setCacheTelemetry(prev => ({ ...prev, hits: prev.hits + 1 }));
+      void refreshDocumentCacheTelemetry();
       setDownloadActionNotice(`Downloaded ${docsToDownload.length} original document files as a ZIP.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1516,17 +1536,18 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                       Teacher &amp; HOD Files Inspection &amp; 14-Week Timeline ({filteredExecutiveUploads.length} Files)
                     </span>
                   </h2>
-                  {/* Redis / Write-Through LRU Document Cache Status Badge */}
-                  <span
-                    data-testid="document-cache-status-badge"
-                    className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-slate-900 text-emerald-300 text-[10px] font-mono font-bold border border-slate-700"
-                    title="Redis / Write-Through In-Memory LRU Document Cache prevents database slowdowns during frequent file downloads & bulk exports"
-                  >
-                    <Cpu className="w-3 h-3 text-emerald-400" />
-                    <span>
-                      CACHE: {cacheTelemetry.backend} • Hits: {cacheTelemetry.hits} • ETag: {cacheTelemetry.etag}
+                  {currentRole === 'SUPER_ADMIN' && (
+                    <span
+                      data-testid="document-cache-status-badge"
+                      className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-slate-900 text-emerald-300 text-[10px] font-mono font-bold border border-slate-700"
+                      title="Instance-local in-memory document cache statistics; cache content is not shared across Vercel instances."
+                    >
+                      <Cpu className="w-3 h-3 text-emerald-400" />
+                      <span>
+                        CACHE: {cacheTelemetry.backend} • Hits: {cacheTelemetry.hits} • Cached: {cacheTelemetry.cachedEntries} files ({cacheTelemetry.cachedBytes.toLocaleString()} B) • Served: {cacheTelemetry.bytesServedFromCache.toLocaleString()} B
+                      </span>
                     </span>
-                  </span>
+                  )}
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">
                   Organized and sorted by Week, Subject, Teacher, Class, or Department. View HOD reviews/comments, download individual files, or bulk-download sorted files named automatically.
@@ -1586,7 +1607,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   <span>{downloadActionNotice}</span>
                 </div>
                 <span className="text-[10px] font-mono text-indigo-700">
-                  Served via {cacheTelemetry.backend}
+                  Instance-local cache statistics
                 </span>
               </div>
             )}

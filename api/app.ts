@@ -25,6 +25,8 @@ import {
   resolveDocumentRemarkAuthorName
 } from '../src/utils/teacherDocumentReview.ts';
 import { RevisionedValueCache } from '../src/utils/revisionedValueCache.ts';
+import { DocumentBytesCache } from '../src/utils/documentBytesCache.ts';
+import { findLinkedSuperAdminUsername } from '../src/utils/supabaseAuthMapping.ts';
 
 type UserRole =
   | 'SUPER_ADMIN'
@@ -43,6 +45,7 @@ interface EncryptedUserCredential {
   saltHex?: string;
   hashHex?: string;
   hasPasswordSet?: boolean;
+  supabaseAuthUserId?: string;
   mustSetPassword: boolean;
   passwordResetRequested: boolean;
   passwordResetRequestedAt?: string;
@@ -85,6 +88,11 @@ const app = express();
 let supabaseClient: SupabaseClient | null = null;
 let warnedMissingLoadFunction = false;
 const stateSnapshotCache = new RevisionedValueCache<StateRow>(5 * 60 * 1000);
+const documentBytesCache = new DocumentBytesCache({
+  maxBytes: 32 * 1024 * 1024,
+  maxEntryBytes: 8 * 1024 * 1024,
+  ttlMs: 30 * 1000
+});
 
 app.set('trust proxy', 1);
 app.use(compression());
@@ -328,6 +336,25 @@ async function requireUser(
     });
     return false;
   }
+}
+
+async function getVerifiedSupabaseAuthUser(
+  accessToken: string,
+  response: Response
+) {
+  const { data, error } = await getSupabase().auth.getUser(accessToken);
+  if (error) {
+    if (error.status === 401 || error.status === 403) {
+      response.status(401).json({ ok: false, error: 'Supabase Auth session is invalid or expired.' });
+      return null;
+    }
+    throw new Error(`Could not verify Supabase Auth session: ${error.message}`);
+  }
+  if (!data.user) {
+    response.status(401).json({ ok: false, error: 'Supabase Auth session is invalid or expired.' });
+    return null;
+  }
+  return data.user;
 }
 
 function getSnapshot(value: unknown): value is FullDatabaseSnapshot {
@@ -726,6 +753,20 @@ function writeDownload(response: Response, filename: string, mimeType: string, b
   response.send(bytes);
 }
 
+async function loadDocumentBytes(filePath: string, documentId?: string): Promise<Buffer> {
+  const cached = documentBytesCache.get(filePath);
+  if (cached) return Buffer.from(cached);
+
+  const { data, error } = await getSupabase().storage.from('edugrade-documents').download(filePath);
+  if (error || !data) {
+    const target = documentId ? `document ${documentId}` : 'stored document';
+    throw new Error(`Could not download ${target}: ${error?.message || 'empty file'}`);
+  }
+  const bytes = Buffer.from(await data.arrayBuffer());
+  documentBytesCache.set(filePath, bytes);
+  return bytes;
+}
+
 app.use((request, response, next) => {
   response.setHeader('Cache-Control', 'no-store');
   if (rejectCrossOriginMutation(request, response)) return;
@@ -822,6 +863,81 @@ app.post('/api/auth/login', async (request, response, next) => {
       fullName: record.fullName,
       role: record.role
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/auth/supabase-login', async (request, response, next) => {
+  try {
+    const accessToken = String(request.body?.accessToken || '');
+    if (!accessToken || accessToken.length > 8192) {
+      response.status(400).json({ ok: false, error: 'A valid Supabase Auth session is required.' });
+      return;
+    }
+    const authUser = await getVerifiedSupabaseAuthUser(accessToken, response);
+    if (!authUser) return;
+
+    const vault = await loadVault();
+    const username = findLinkedSuperAdminUsername(vault, authUser.id);
+    if (!username) {
+      response.status(403).json({
+        ok: false,
+        error: 'This Supabase Auth account is not linked to an active EduGrade Super Admin account.'
+      });
+      return;
+    }
+    const record = vault[username];
+    setSessionCookie(response, request, username);
+    response.json({
+      ok: true,
+      username,
+      fullName: record.fullName,
+      email: authUser.email || '',
+      role: record.role
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/auth/link-supabase', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response, new Set(['SUPER_ADMIN'])))) return;
+    const accessToken = String(request.body?.accessToken || '');
+    if (!accessToken || accessToken.length > 8192) {
+      response.status(400).json({ ok: false, error: 'A valid Supabase Auth session is required.' });
+      return;
+    }
+    const authUser = await getVerifiedSupabaseAuthUser(accessToken, response);
+    if (!authUser) return;
+
+    const vault = await loadVault();
+    const currentAccount = vault[request.auth!.username];
+    if (!currentAccount || currentAccount.role !== 'SUPER_ADMIN') {
+      response.status(403).json({ ok: false, error: 'Only the current Super Admin account can be linked.' });
+      return;
+    }
+    const existingLink = Object.entries(vault).find(
+      ([username, account]) =>
+        username !== request.auth!.username &&
+        account.supabaseAuthUserId === authUser.id
+    );
+    if (existingLink) {
+      response.status(409).json({
+        ok: false,
+        error: 'This Supabase Auth account is already linked to another EduGrade account.'
+      });
+      return;
+    }
+
+    vault[request.auth!.username] = {
+      ...currentAccount,
+      supabaseAuthUserId: authUser.id,
+      updatedAt: new Date().toISOString()
+    };
+    await saveVault(vault);
+    response.json({ ok: true });
   } catch (error) {
     next(error);
   }
@@ -1366,6 +1482,7 @@ app.post('/api/documents/upload', async (request: AuthenticatedRequest, response
     const fileName = sanitizeFileName(String(request.body?.fileName || 'document'));
     const id = String(request.body?.id || crypto.randomUUID());
     const storagePath = `${request.auth!.username}/${id}/${fileName}`;
+    documentBytesCache.delete(storagePath);
     const { error } = await getSupabase().storage.from('edugrade-documents').upload(storagePath, bytes, {
       contentType: mimeType,
       upsert: true
@@ -1389,6 +1506,7 @@ app.post('/api/documents/upload-url', async (request: AuthenticatedRequest, resp
     const id = String(request.body?.id || crypto.randomUUID());
     const fileName = sanitizeFileName(String(request.body?.fileName || 'document'));
     const storagePath = `${request.auth!.username}/${id}/${fileName}`;
+    documentBytesCache.delete(storagePath);
     const { data, error } = await getSupabase()
       .storage.from('edugrade-documents')
       .createSignedUploadUrl(storagePath);
@@ -1422,6 +1540,7 @@ app.post('/api/documents/complete-upload', async (request: AuthenticatedRequest,
       response.status(404).json({ ok: false, error: 'The uploaded file was not found in Supabase Storage.' });
       return;
     }
+    documentBytesCache.delete(storagePath);
     const size = Number(object.metadata?.size || 0);
     response.json({
       ok: true,
@@ -1449,9 +1568,8 @@ app.get('/api/documents/download/:id', async (request: AuthenticatedRequest, res
       response.status(404).json({ ok: false, error: 'The document has no stored file path.' });
       return;
     }
-    const { data, error } = await getSupabase().storage.from('edugrade-documents').download(filePath);
-    if (error || !data) throw new Error(`Could not download stored document: ${error?.message || 'empty file'}`);
-    writeDownload(response, document.fileName, document.fileType || 'application/octet-stream', Buffer.from(await data.arrayBuffer()));
+    const bytes = await loadDocumentBytes(filePath);
+    writeDownload(response, document.fileName, document.fileType || 'application/octet-stream', bytes);
   } catch (error) {
     next(error);
   }
@@ -1486,11 +1604,8 @@ app.post('/api/documents/bulk-download', async (request: AuthenticatedRequest, r
     archive.on('error', next);
     archive.pipe(response);
     for (const document of requested) {
-      const { data, error } = await getSupabase()
-        .storage.from('edugrade-documents')
-        .download(document.fileStoragePath!);
-      if (error || !data) throw new Error(`Could not download document ${document.id}: ${error?.message || 'empty file'}`);
-      archive.append(Buffer.from(await data.arrayBuffer()), {
+      const bytes = await loadDocumentBytes(document.fileStoragePath!, document.id);
+      archive.append(bytes, {
         name: sanitizeFileName(document.fileName)
       });
     }
@@ -1500,8 +1615,20 @@ app.post('/api/documents/bulk-download', async (request: AuthenticatedRequest, r
   }
 });
 
-app.get('/api/cache/status', (_request, response) => {
-  response.json({ ok: true, entries: 0, hits: 0, misses: 0, mode: 'SUPABASE_STORAGE' });
+app.get('/api/cache/status', async (request: AuthenticatedRequest, response) => {
+  if (!(await requireUser(request, response, new Set(['SUPER_ADMIN'])))) return;
+  const stats = documentBytesCache.getStats();
+  response.json({
+    ok: true,
+    stats: {
+      backend: 'VERCEL_INSTANCE_MEMORY_LRU',
+      hits: stats.hits,
+      misses: stats.misses,
+      cachedEntries: stats.entries,
+      cachedBytes: stats.cachedBytes,
+      bytesServedFromCache: stats.bytesServedFromCache
+    }
+  });
 });
 
 app.get('/api/database/files-manifest', (_request, response) => {

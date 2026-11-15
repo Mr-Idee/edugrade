@@ -19,6 +19,7 @@ import {
   getTeachersCornerTabTitle,
   getTeacherHodDesignation
 } from '../utils/rbacAndAuth';
+import { createSupabaseAuthClient } from '../utils/supabaseAuthClient';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
   Home,
@@ -84,7 +85,9 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
 
   // Staff Login / First-Time Password Setup / Forgot Password Modal State
   const [authStep, setAuthStep] = useState<'LOGIN' | 'FIRST_TIME_SETUP' | 'FORGOT_PASSWORD'>('LOGIN');
+  const [authMode, setAuthMode] = useState<'STAFF' | 'SUPABASE'>('STAFF');
   const [loginUsername, setLoginUsername] = useState('');
+  const [supabaseEmail, setSupabaseEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -294,6 +297,78 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
       });
     }
     return;
+  };
+
+  const handleSupabaseAuthSubmit = async (linkCurrentSuperAdmin = false) => {
+    setAuthMessage(null);
+    const email = supabaseEmail.trim();
+    if (!email || !loginPassword) {
+      setAuthMessage({ type: 'error', text: 'Enter the Supabase Auth email and password.' });
+      return;
+    }
+
+    try {
+      const { data, error } = await createSupabaseAuthClient().auth.signInWithPassword({
+        email,
+        password: loginPassword
+      });
+      if (error || !data.session?.access_token) {
+        throw new Error(error?.message || 'Supabase Auth did not return a valid session.');
+      }
+
+      const accessToken = data.session.access_token;
+      if (linkCurrentSuperAdmin) {
+        const linkResponse = await fetch('/api/auth/link-supabase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken })
+        });
+        const linkResult: { ok?: boolean; error?: string } = await linkResponse.json();
+        if (!linkResponse.ok || !linkResult.ok) {
+          throw new Error(linkResult.error || 'Could not link this Supabase Auth account.');
+        }
+      }
+
+      const loginResponse = await fetch('/api/auth/supabase-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessToken })
+      });
+      const loginResult: {
+        ok?: boolean;
+        error?: string;
+        username?: string;
+        fullName?: string;
+        email?: string;
+        role?: string;
+      } = await loginResponse.json();
+      if (!loginResponse.ok || !loginResult.ok || loginResult.role !== 'SUPER_ADMIN' || !loginResult.username) {
+        throw new Error(loginResult.error || 'This Supabase Auth account is not linked to an EduGrade Super Admin.');
+      }
+
+      completeStaffLogin(
+        {
+          id: 999,
+          fullName: loginResult.fullName || 'Super Admin',
+          username: loginResult.username,
+          email: loginResult.email || email,
+          role: 'SUPER_ADMIN',
+          isActive: true,
+          hasPasswordSet: true,
+          mustSetPassword: false
+        },
+        'SUPER_ADMIN'
+      );
+      setLoginPassword('');
+      setSupabaseEmail('');
+      closeAuthModal();
+      window.setTimeout(() => window.location.reload(), 0);
+    } catch (error) {
+      setAuthMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Supabase Auth sign-in failed.'
+      });
+    }
   };
 
   // First-Time Password Setup submit handler (enforces >8 chars, 1 uppercase, 1 number/special char)
@@ -922,14 +997,18 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
                 <div>
                   <h3 className="text-base font-black">
                     {authStep === 'LOGIN'
-                      ? 'Staff Sign In & PIN Verification'
+                      ? authMode === 'SUPABASE'
+                        ? 'Super Admin Supabase Sign In'
+                        : 'Staff Sign In & PIN Verification'
                       : authStep === 'FIRST_TIME_SETUP'
                       ? 'Create New Account Password'
                       : 'Request Password Reset'}
                   </h3>
                   <p className="text-xs text-slate-400">
                     {authStep === 'LOGIN'
-                      ? 'Sign in with your username & 4-digit initial PIN or password'
+                      ? authMode === 'SUPABASE'
+                        ? 'Use the email and password for your linked Supabase Auth account'
+                        : 'Sign in with your username & 4-digit initial PIN or password'
                       : authStep === 'FIRST_TIME_SETUP'
                       ? '4-Digit PIN verified • Set your personal password to unlock'
                       : 'Notify Super Admin, Principal, or Vice Principal'}
@@ -967,6 +1046,41 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
             )}
 
             {authStep === 'LOGIN' && (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('STAFF');
+                    setLoginPassword('');
+                    setAuthMessage(null);
+                  }}
+                  className={`py-2 rounded-lg border font-bold ${
+                    authMode === 'STAFF'
+                      ? 'bg-indigo-600 border-indigo-400 text-white'
+                      : 'bg-slate-800 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  Staff Username
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('SUPABASE');
+                    setLoginPassword('');
+                    setAuthMessage(null);
+                  }}
+                  className={`py-2 rounded-lg border font-bold ${
+                    authMode === 'SUPABASE'
+                      ? 'bg-indigo-600 border-indigo-400 text-white'
+                      : 'bg-slate-800 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  Super Admin Auth
+                </button>
+              </div>
+            )}
+
+            {authStep === 'LOGIN' && authMode === 'STAFF' && (
               <form onSubmit={handleStaffLoginSubmit} className="space-y-3.5 text-xs">
                 <div>
                   <label className="block font-bold text-slate-300 uppercase mb-1 text-[11px]">
@@ -1042,6 +1156,85 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
                     className="w-1/2 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-600/30 cursor-pointer"
                   >
                     Sign In &amp; Unlock
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {authStep === 'LOGIN' && authMode === 'SUPABASE' && (
+              <form
+                onSubmit={event => {
+                  event.preventDefault();
+                  void handleSupabaseAuthSubmit();
+                }}
+                className="space-y-3.5 text-xs"
+              >
+                <div>
+                  <label className="block font-bold text-slate-300 uppercase mb-1 text-[11px]">
+                    Supabase Auth Email
+                  </label>
+                  <input
+                    type="email"
+                    data-testid="supabase-auth-email-input"
+                    value={supabaseEmail}
+                    onChange={event => setSupabaseEmail(event.target.value)}
+                    placeholder="Enter your Supabase Auth email"
+                    autoComplete="username"
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-300 uppercase mb-1 text-[11px]">
+                    Supabase Auth Password
+                  </label>
+                  <input
+                    type="password"
+                    data-testid="supabase-auth-password-input"
+                    value={loginPassword}
+                    onChange={event => setLoginPassword(event.target.value)}
+                    placeholder="Enter your Supabase Auth password"
+                    autoComplete="current-password"
+                    className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    required
+                  />
+                </div>
+
+                <p className="text-[11px] text-slate-400">
+                  Supabase Auth is accepted only after its user ID is linked to an active EduGrade Super Admin account.
+                  Google sign-in is not configured in this login flow.
+                </p>
+
+                <div className="flex flex-col gap-2 pt-1">
+                  <button
+                    type="submit"
+                    data-testid="supabase-auth-login-button"
+                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-600/30"
+                  >
+                    Sign In with Supabase Auth
+                  </button>
+                  {isStaffLoggedIn && currentRole === 'SUPER_ADMIN' && (
+                    <button
+                      type="button"
+                      data-testid="link-supabase-auth-button"
+                      onClick={() => void handleSupabaseAuthSubmit(true)}
+                      className="w-full py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white font-bold"
+                    >
+                      Link Supabase Account &amp; Sign In
+                    </button>
+                  )}
+                  {(!isStaffLoggedIn || currentRole !== 'SUPER_ADMIN') && (
+                    <p className="text-[11px] text-amber-300">
+                      To link an account for the first time, sign in with the existing EduGrade Super Admin credentials first.
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={closeAuthModal}
+                    className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold"
+                  >
+                    Cancel
                   </button>
                 </div>
               </form>
