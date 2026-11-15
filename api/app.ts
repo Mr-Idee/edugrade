@@ -17,13 +17,14 @@ import {
   type FullDatabaseSnapshot
 } from '../src/utils/sqlExportGenerator.ts';
 import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
-import { canAssignStaffRole } from '../src/utils/rbacAndAuth.ts';
+import { canAssignStaffRole } from '../src/utils/staffRolePolicy.ts';
 import {
   isDocumentInHodScope,
   mergeDocumentReviewUpdate,
   resolveCurrentHodReviewer,
   resolveDocumentRemarkAuthorName
 } from '../src/utils/teacherDocumentReview.ts';
+import { RevisionedValueCache } from '../src/utils/revisionedValueCache.ts';
 
 type UserRole =
   | 'SUPER_ADMIN'
@@ -83,6 +84,7 @@ const USER_ROLES = new Set<UserRole>([
 const app = express();
 let supabaseClient: SupabaseClient | null = null;
 let warnedMissingLoadFunction = false;
+const stateSnapshotCache = new RevisionedValueCache<StateRow>(5 * 60 * 1000);
 
 app.set('trust proxy', 1);
 app.use(compression());
@@ -404,6 +406,21 @@ async function loadStateMetadata(): Promise<StateMetadata | null> {
   return data as StateMetadata | null;
 }
 
+async function loadCachedState(): Promise<StateRow | null> {
+  const metadata = await loadStateMetadata();
+  if (!metadata) {
+    stateSnapshotCache.clear();
+    return null;
+  }
+
+  const cached = stateSnapshotCache.get(metadata.state_revision);
+  if (cached) return cached;
+
+  const row = await loadState();
+  if (row) stateSnapshotCache.set(row.state_revision, row);
+  return row;
+}
+
 function isAdmin(role: UserRole): boolean {
   return ADMIN_ROLES.has(role);
 }
@@ -647,7 +664,13 @@ async function saveState(
   if (!row?.state_revision || !row?.updated_at) {
     throw new Error('Supabase saved the state but returned no revision metadata.');
   }
-  return { stateRevision: row.state_revision, updatedAt: row.updated_at };
+  const saved = { stateRevision: row.state_revision, updatedAt: row.updated_at };
+  stateSnapshotCache.set(saved.stateRevision, {
+    state_json: omitSessionArchives(snapshot) as FullDatabaseSnapshot,
+    state_revision: saved.stateRevision,
+    updated_at: saved.updatedAt
+  });
+  return saved;
 }
 
 function decodeRequestBody(body: unknown): Record<string, unknown> {
@@ -1098,7 +1121,7 @@ app.post('/api/auth/update-staff-credentials', async (request: AuthenticatedRequ
 app.get('/api/state', async (request: AuthenticatedRequest, response, next) => {
   try {
     if (!(await requireUser(request, response))) return;
-    const row = await loadState();
+    const row = await loadCachedState();
     response.json({
       ok: true,
       hasPersistedState: Boolean(row),
@@ -1122,7 +1145,7 @@ app.post('/api/state', async (request: AuthenticatedRequest, response, next) => 
       return;
     }
     const admin = isAdmin(request.auth!.record.role);
-    const current = admin ? null : await loadState();
+    const current = admin ? null : await loadCachedState();
     const currentMetadata = admin ? await loadStateMetadata() : current;
     if (!currentMetadata && !admin) {
       response.status(403).json({ ok: false, error: 'An administrator must initialize school data first.' });
@@ -1165,7 +1188,7 @@ app.post('/api/state/offline-commit', async (request: AuthenticatedRequest, resp
       response.status(400).json({ ok: false, error: 'Invalid offline snapshot payload.' });
       return;
     }
-    const currentRow = await loadState();
+    const currentRow = await loadCachedState();
     if (!currentRow) {
       response.status(409).json({ ok: false, error: 'Initialize the school database before committing offline changes.' });
       return;
@@ -1232,7 +1255,7 @@ app.post('/api/db/init', async (request: AuthenticatedRequest, response, next) =
       response.status(400).json({ ok: false, error: 'Invalid school database snapshot.' });
       return;
     }
-    const current = await loadState();
+    const current = await loadCachedState();
     const saved = await saveState(normalizeEnrollmentIds(submitted), current?.state_revision || null);
     response.json({
       ok: true,
@@ -1255,7 +1278,7 @@ app.get('/api/backups', async (request: AuthenticatedRequest, response, next) =>
     if (!(await requireUser(request, response, new Set(['SUPER_ADMIN'])))) return;
     const { data, error } = await getSupabase()
       .from('system_backups')
-      .select('id,created_at,created_by,label,file_name,payload')
+      .select('id,created_at,created_by,label,file_name')
       .order('created_at', { ascending: false });
     if (error) throw new Error(`Could not load system backups: ${error.message}`);
     response.json({
@@ -1265,9 +1288,37 @@ app.get('/api/backups', async (request: AuthenticatedRequest, response, next) =>
         createdAt: record.created_at,
         createdBy: record.created_by,
         label: record.label,
-        fileName: record.file_name,
-        payload: record.payload
+        fileName: record.file_name
       }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/backups/:id', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response, new Set(['SUPER_ADMIN'])))) return;
+    const { data, error } = await getSupabase()
+      .from('system_backups')
+      .select('id,created_at,created_by,label,file_name,payload')
+      .eq('id', request.params.id)
+      .maybeSingle();
+    if (error) throw new Error(`Could not load system backup: ${error.message}`);
+    if (!data) {
+      response.status(404).json({ ok: false, error: 'The selected system backup was not found.' });
+      return;
+    }
+    response.json({
+      ok: true,
+      backup: {
+        id: data.id,
+        createdAt: data.created_at,
+        createdBy: data.created_by,
+        label: data.label,
+        fileName: data.file_name,
+        payload: data.payload
+      }
     });
   } catch (error) {
     next(error);
@@ -1319,58 +1370,6 @@ app.post('/api/documents/upload', async (request: AuthenticatedRequest, response
       contentType: mimeType,
       upsert: true
     });
-
-    app.post('/api/documents/upload-url', async (request: AuthenticatedRequest, response, next) => {
-      try {
-        if (!(await requireUser(request, response))) return;
-        const id = String(request.body?.id || crypto.randomUUID());
-        const fileName = sanitizeFileName(String(request.body?.fileName || 'document'));
-        const storagePath = `${request.auth!.username}/${id}/${fileName}`;
-        const { data, error } = await getSupabase()
-          .storage.from('edugrade-documents')
-          .createSignedUploadUrl(storagePath);
-        if (error || !data?.token) {
-          throw new Error(`Could not create a signed document upload: ${error?.message || 'missing upload token'}`);
-        }
-        response.json({ ok: true, id, fileName, fileStoragePath: storagePath, token: data.token });
-      } catch (error) {
-        next(error);
-      }
-    });
-
-    app.post('/api/documents/complete-upload', async (request: AuthenticatedRequest, response, next) => {
-      try {
-        if (!(await requireUser(request, response))) return;
-        const storagePath = String(request.body?.fileStoragePath || '');
-        const id = String(request.body?.id || '');
-        const fileName = sanitizeFileName(String(request.body?.fileName || 'document'));
-        if (!id || !storagePath.startsWith(`${request.auth!.username}/${id}/`)) {
-          response.status(400).json({ ok: false, error: 'Invalid document upload reference.' });
-          return;
-        }
-        const directory = storagePath.slice(0, storagePath.lastIndexOf('/'));
-        const storedName = storagePath.slice(storagePath.lastIndexOf('/') + 1);
-        const { data, error } = await getSupabase()
-          .storage.from('edugrade-documents')
-          .list(directory, { search: storedName, limit: 1 });
-        if (error) throw new Error(`Could not verify the uploaded document: ${error.message}`);
-        const object = data?.find(item => item.name === storedName);
-        if (!object) {
-          response.status(404).json({ ok: false, error: 'The uploaded file was not found in Supabase Storage.' });
-          return;
-        }
-        const size = Number(object.metadata?.size || 0);
-        response.json({
-          ok: true,
-          id,
-          fileName,
-          fileSizeKb: Math.max(1, Math.round(size / 1024)),
-          fileStoragePath: storagePath
-        });
-      } catch (error) {
-        next(error);
-      }
-    });
     if (error) throw new Error(`Could not store document in Supabase Storage: ${error.message}`);
     response.json({
       ok: true,
@@ -1384,10 +1383,62 @@ app.post('/api/documents/upload', async (request: AuthenticatedRequest, response
   }
 });
 
+app.post('/api/documents/upload-url', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response))) return;
+    const id = String(request.body?.id || crypto.randomUUID());
+    const fileName = sanitizeFileName(String(request.body?.fileName || 'document'));
+    const storagePath = `${request.auth!.username}/${id}/${fileName}`;
+    const { data, error } = await getSupabase()
+      .storage.from('edugrade-documents')
+      .createSignedUploadUrl(storagePath);
+    if (error || !data?.token) {
+      throw new Error(`Could not create a signed document upload: ${error?.message || 'missing upload token'}`);
+    }
+    response.json({ ok: true, id, fileName, fileStoragePath: storagePath, token: data.token });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/documents/complete-upload', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response))) return;
+    const storagePath = String(request.body?.fileStoragePath || '');
+    const id = String(request.body?.id || '');
+    const fileName = sanitizeFileName(String(request.body?.fileName || 'document'));
+    if (!id || !storagePath.startsWith(`${request.auth!.username}/${id}/`)) {
+      response.status(400).json({ ok: false, error: 'Invalid document upload reference.' });
+      return;
+    }
+    const directory = storagePath.slice(0, storagePath.lastIndexOf('/'));
+    const storedName = storagePath.slice(storagePath.lastIndexOf('/') + 1);
+    const { data, error } = await getSupabase()
+      .storage.from('edugrade-documents')
+      .list(directory, { search: storedName, limit: 1 });
+    if (error) throw new Error(`Could not verify the uploaded document: ${error.message}`);
+    const object = data?.find(item => item.name === storedName);
+    if (!object) {
+      response.status(404).json({ ok: false, error: 'The uploaded file was not found in Supabase Storage.' });
+      return;
+    }
+    const size = Number(object.metadata?.size || 0);
+    response.json({
+      ok: true,
+      id,
+      fileName,
+      fileSizeKb: Math.max(1, Math.round(size / 1024)),
+      fileStoragePath: storagePath
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/api/documents/download/:id', async (request: AuthenticatedRequest, response, next) => {
   try {
     if (!(await requireUser(request, response))) return;
-    const row = await loadState();
+    const row = await loadCachedState();
     if (!row || !authorizedDocumentPath(filterSnapshotForStaff(row.state_json, request.auth!), request.params.id)) {
       response.status(404).json({ ok: false, error: 'Document not found or you do not have access to it.' });
       return;
@@ -1414,7 +1465,7 @@ app.post('/api/documents/bulk-download', async (request: AuthenticatedRequest, r
       : Array.isArray(request.body?.documents)
       ? request.body.documents.map((item: { id?: unknown }) => String(item.id || ''))
       : [];
-    const row = await loadState();
+    const row = await loadCachedState();
     if (!row) {
       response.status(404).json({ ok: false, error: 'No school records are stored.' });
       return;

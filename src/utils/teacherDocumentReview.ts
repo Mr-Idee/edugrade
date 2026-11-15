@@ -4,7 +4,6 @@ import type {
   TeacherDocumentExecutiveRemark,
   TeacherDocumentUpload
 } from '../types/index';
-import { getDepartmentForSubject } from './rbacAndAuth';
 
 export function resolveDocumentRemarkAuthorName(
   remark: TeacherDocumentExecutiveRemark,
@@ -42,7 +41,9 @@ export function resolveCurrentHodReviewer(
   if (!document.hodReviewedBy) return undefined;
   const department =
     departments.find(item => item.id === document.departmentId) ||
-    getDepartmentForSubject(document.subjectId, departments);
+    departments.find(item =>
+      (item.subjectIds || []).some(subjectId => Number(subjectId) === Number(document.subjectId))
+    );
   if (!department) return document.hodReviewedBy;
 
   const currentHod =

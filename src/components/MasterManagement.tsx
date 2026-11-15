@@ -29,7 +29,7 @@ import {
 import {
   formatBackupTimestamp,
   formatByteSize,
-  SystemBackupRecord
+  SystemBackupListItem
 } from '../utils/backupRestoreEngine';
 import {
   SoftwareUpdateManifest,
@@ -426,13 +426,35 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
     }
   };
 
-  const handleDownloadBackupFile = (bkp: SystemBackupRecord) => {
-    const jsonContent = JSON.stringify(bkp, null, 2);
+  const handleDownloadBackupFile = async (bkp: SystemBackupListItem) => {
+    let downloadRecord = bkp;
+    if (!downloadRecord.payload) {
+      try {
+        const response = await fetch(`/api/backups/${encodeURIComponent(bkp.id)}`);
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.ok || !data.backup?.payload) {
+          setBackupStatusBanner({
+            ok: false,
+            message: data?.error || `Could not load the selected backup (HTTP ${response.status}).`
+          });
+          return;
+        }
+        downloadRecord = { ...bkp, ...data.backup };
+      } catch (error) {
+        setBackupStatusBanner({
+          ok: false,
+          message: `Could not load the selected backup: ${error instanceof Error ? error.message : String(error)}`
+        });
+        return;
+      }
+    }
+
+    const jsonContent = JSON.stringify(downloadRecord, null, 2);
     const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', bkp.fileName || `EduGrade_Backup_${bkp.id}.ebkp.json`);
+    link.setAttribute('download', downloadRecord.fileName || `EduGrade_Backup_${bkp.id}.ebkp.json`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -3962,9 +3984,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                               Latest Backup
                             </span>
                           )}
-                          <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 font-bold text-[10px]">
-                            {formatByteSize(bkp.sizeBytes)}
-                          </span>
+                          {typeof bkp.sizeBytes === 'number' && (
+                            <span className="px-2 py-0.5 rounded bg-purple-100 text-purple-900 font-bold text-[10px]">
+                              {formatByteSize(bkp.sizeBytes)}
+                            </span>
+                          )}
                           <span className="text-[11px] text-slate-500 font-medium">
                             Created by <strong className="text-slate-800">@{bkp.createdBy}</strong>
                           </span>
@@ -3977,24 +4001,36 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
 
                         {/* Summary Metrics */}
                         <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] font-bold">
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                            Institution: {bkp.institutionName}
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                            Session: {bkp.activeSessionName} ({bkp.activeTermName} Term)
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
-                            {bkp.summary.studentsCount} Students
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            {bkp.summary.scoresCount} CA Scores • {bkp.summary.termRecordsCount} Term Records
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200">
-                            {bkp.summary.documentsCount} Teacher Files
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
-                            {bkp.summary.classesCount} Classes • {bkp.summary.subjectsCount} Subjects • {bkp.summary.teachersCount} Staff
-                          </span>
+                          {bkp.institutionName && (
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                              Institution: {bkp.institutionName}
+                            </span>
+                          )}
+                          {bkp.activeSessionName && bkp.activeTermName && (
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                              Session: {bkp.activeSessionName} ({bkp.activeTermName} Term)
+                            </span>
+                          )}
+                          {bkp.summary ? (
+                            <>
+                              <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                {bkp.summary.studentsCount} Students
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                {bkp.summary.scoresCount} CA Scores • {bkp.summary.termRecordsCount} Term Records
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-900 border border-amber-200">
+                                {bkp.summary.documentsCount} Teacher Files
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                                {bkp.summary.classesCount} Classes • {bkp.summary.subjectsCount} Subjects • {bkp.summary.teachersCount} Staff
+                              </span>
+                            </>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                              Backup details load when selected
+                            </span>
+                          )}
                         </div>
                       </div>
 

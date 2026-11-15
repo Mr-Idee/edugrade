@@ -94,6 +94,10 @@ export interface SystemBackupRecord {
   payload: SystemStateSnapshot;
 }
 
+export type SystemBackupListItem =
+  Pick<SystemBackupRecord, 'id' | 'fileName' | 'label' | 'createdAt' | 'createdBy'> &
+  Partial<Omit<SystemBackupRecord, 'id' | 'fileName' | 'label' | 'createdAt' | 'createdBy'>>;
+
 export const SYSTEM_BACKUP_FORMAT_VERSION = '2026.2.0';
 
 /**

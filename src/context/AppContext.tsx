@@ -98,6 +98,7 @@ import {
 } from '../utils/rbacAndAuth';
 import {
   SystemBackupRecord,
+  SystemBackupListItem,
   SystemStateSnapshot,
   createSystemBackupRecord,
   validateAndParseBackupFile
@@ -368,9 +369,9 @@ interface AppContextType {
   publishReportCards: (sectionId: number, publish: boolean) => void;
 
   // Full System Backup & Restore (Super Admin Only)
-  systemBackups: SystemBackupRecord[];
+  systemBackups: SystemBackupListItem[];
   createSystemBackup: (label?: string) => Promise<{ ok: boolean; message: string; backup?: SystemBackupRecord }>;
-  restoreSystemBackup: (backupOrId: string | SystemBackupRecord) => Promise<{ ok: boolean; message: string }>;
+  restoreSystemBackup: (backupOrId: string | SystemBackupListItem) => Promise<{ ok: boolean; message: string }>;
   importSystemBackupFile: (
     rawJson: string,
     restoreImmediately?: boolean
@@ -4101,7 +4102,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ]);
 
   // System Backups state (Super Admin Only)
-  const [systemBackups, setSystemBackups] = useState<SystemBackupRecord[]>(() => {
+  const [systemBackups, setSystemBackups] = useState<SystemBackupListItem[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SYSTEM_BACKUPS);
     if (saved) {
       try {
@@ -4155,17 +4156,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeSetItem(STORAGE_KEYS.SYSTEM_BACKUPS, JSON.stringify(systemBackups));
   }, [systemBackups]);
 
-  // Load persisted server backups on mount
+  // Load backup metadata only; payloads are fetched when a backup is opened.
   useEffect(() => {
+    if (currentRole !== 'SUPER_ADMIN') return;
     fetch('/api/backups')
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
         if (data?.ok && Array.isArray(data.backups) && data.backups.length > 0) {
           setSystemBackups(prev => {
-            const byId = new Map<string, SystemBackupRecord>();
+            const byId = new Map<string, SystemBackupListItem>();
             for (const b of prev) byId.set(b.id, b);
             for (const b of data.backups) {
-              if (b && b.id && b.payload) byId.set(b.id, b);
+              if (!b || typeof b.id !== 'string') continue;
+              const existing = byId.get(b.id);
+              byId.set(
+                b.id,
+                existing
+                  ? { ...existing, ...b, ...(existing.payload ? { payload: existing.payload } : {}) }
+                  : b
+              );
             }
             return Array.from(byId.values()).sort(
               (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -4174,7 +4183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       })
       .catch(() => {});
-  }, []);
+  }, [currentRole]);
 
   const createSystemBackup = useCallback(
     async (label?: string): Promise<{ ok: boolean; message: string; backup?: SystemBackupRecord }> => {
@@ -4215,7 +4224,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const restoreSystemBackup = useCallback(
-    async (backupOrId: string | SystemBackupRecord): Promise<{ ok: boolean; message: string }> => {
+    async (backupOrId: string | SystemBackupListItem): Promise<{ ok: boolean; message: string }> => {
       if (!canAccessSystemBackup(currentRole)) {
         return {
           ok: false,
@@ -4223,16 +4232,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       }
 
-      const targetBackup =
+      const listedBackup =
         typeof backupOrId === 'string'
           ? systemBackups.find(b => b.id === backupOrId)
           : backupOrId;
 
-      if (!targetBackup || !targetBackup.payload) {
+      if (!listedBackup) {
         return {
           ok: false,
-          message: 'Selected backup record could not be found or has an empty payload.'
+          message: 'Selected backup record could not be found.'
         };
+      }
+
+      let targetBackup: SystemBackupRecord | null =
+        listedBackup.payload ? (listedBackup as SystemBackupRecord) : null;
+      if (!targetBackup) {
+        try {
+          const response = await fetch(`/api/backups/${encodeURIComponent(listedBackup.id)}`);
+          const data = await response.json().catch(() => null);
+          if (!response.ok || !data?.ok || !data.backup) {
+            return {
+              ok: false,
+              message: data?.error || `Could not load the selected backup (HTTP ${response.status}).`
+            };
+          }
+          const parsed = validateAndParseBackupFile(data.backup);
+          if (!parsed.valid || !parsed.backup) {
+            return {
+              ok: false,
+              message: parsed.error || 'The selected backup has an invalid payload.'
+            };
+          }
+          targetBackup = parsed.backup;
+          setSystemBackups(prev =>
+            prev.map(backup => (backup.id === targetBackup!.id ? targetBackup! : backup))
+          );
+        } catch (error) {
+          return {
+            ok: false,
+            message: `Could not load the selected backup: ${error instanceof Error ? error.message : String(error)}`
+          };
+        }
+      }
+
+      if (!targetBackup?.payload) {
+        return { ok: false, message: 'Selected backup has no payload.' };
       }
 
       const p = targetBackup.payload;
