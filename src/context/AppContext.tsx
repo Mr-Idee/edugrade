@@ -2999,7 +2999,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (prevScoreVal !== score) {
       const newAuditLog: ScoreAuditLog = {
         id: Date.now(),
-        studentName: student?.fullName || `Student #${studentId}`,
+        studentId,
+        studentName: student?.fullName || 'Unknown student',
         subjectName: subject?.name || `Subject #${subjectId}`,
         componentName: comp.name,
         previousScore: prevScoreVal,

@@ -13,6 +13,7 @@ import {
   downloadAuditTrailPdf,
   downloadClassCompletenessAuditPdf
 } from '../utils/pdfGenerator';
+import { resolveScoreAuditStudentName } from '../utils/scoreAudit';
 import { canPrintOrDownload } from '../utils/rbacAndAuth';
 import {
   Search,
@@ -172,17 +173,24 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ onOpenScoreGrid }) =
 
   // Filtered Modification Logs
   const filteredLogs = useMemo(() => {
-    return auditLogs.filter(log => {
-      const matchesSearch =
-        log.studentName.toLowerCase().includes(search.toLowerCase()) ||
-        log.subjectName.toLowerCase().includes(search.toLowerCase()) ||
-        log.changedBy.toLowerCase().includes(search.toLowerCase()) ||
-        log.changeReason.toLowerCase().includes(search.toLowerCase());
+    return auditLogs
+      .filter(log => {
+        const studentName = resolveScoreAuditStudentName(log, students);
+        const matchesSearch =
+          studentName.toLowerCase().includes(search.toLowerCase()) ||
+          log.studentName.toLowerCase().includes(search.toLowerCase()) ||
+          log.subjectName.toLowerCase().includes(search.toLowerCase()) ||
+          log.changedBy.toLowerCase().includes(search.toLowerCase()) ||
+          log.changeReason.toLowerCase().includes(search.toLowerCase());
 
-      const matchesRole = selectedRole === 'ALL' || log.changedByRole === selectedRole;
-      return matchesSearch && matchesRole;
-    });
-  }, [auditLogs, search, selectedRole]);
+        const matchesRole = selectedRole === 'ALL' || log.changedByRole === selectedRole;
+        return matchesSearch && matchesRole;
+      })
+      .map(log => ({
+        ...log,
+        studentName: resolveScoreAuditStudentName(log, students)
+      }));
+  }, [auditLogs, students, search, selectedRole]);
 
   const handleDownloadCompletenessPdf = () => {
     downloadClassCompletenessAuditPdf({
