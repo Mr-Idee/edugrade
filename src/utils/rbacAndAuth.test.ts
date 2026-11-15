@@ -14,6 +14,8 @@ import {
   canAccessDatabaseConfig,
   canPrintOrDownload,
   canManageStaffAuth,
+  getAssignableStaffRoles,
+  canAssignStaffRole,
   getAllowedTabsForRole,
   getClassGradingScale,
   parseCsvIncludeFlag,
@@ -112,6 +114,23 @@ test('Strict Role Switching & Subject Clearance Compliance', () => {
   assert.deepEqual(getTeacherAssignedSubjectIdsForSection(assignments, 1), [2, 5]);
   assert.deepEqual(getTeacherAssignedSubjectIdsForSection(assignments, 2), [4]);
   assert.deepEqual(getTeacherAssignedSubjectIdsForSection(assignments, 3), []);
+});
+
+test('Staff role assignment follows the executive hierarchy', () => {
+  assert.deepEqual(getAssignableStaffRoles('SUPER_ADMIN'), [
+    'HEAD_OF_SCHOOLS',
+    'PRINCIPAL',
+    'VICE_PRINCIPAL',
+    'CLASS_TEACHER',
+    'SUBJECT_TEACHER'
+  ]);
+  assert.equal(canAssignStaffRole('HEAD_OF_SCHOOLS', 'PRINCIPAL'), true);
+  assert.equal(canAssignStaffRole('HEAD_OF_SCHOOLS', 'HEAD_OF_SCHOOLS'), false);
+  assert.equal(canAssignStaffRole('PRINCIPAL', 'VICE_PRINCIPAL'), true);
+  assert.equal(canAssignStaffRole('PRINCIPAL', 'PRINCIPAL'), false);
+  assert.equal(canAssignStaffRole('VICE_PRINCIPAL', 'CLASS_TEACHER'), true);
+  assert.equal(canAssignStaffRole('VICE_PRINCIPAL', 'HEAD_OF_SCHOOLS'), false);
+  assert.equal(canAssignStaffRole('CLASS_TEACHER', 'SUBJECT_TEACHER'), false);
 });
 
 test('Roles & RBAC: Head of Schools shares executive permissions but not database configuration access', () => {

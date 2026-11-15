@@ -92,6 +92,7 @@ import {
   DEFAULT_ACADEMIC_DEPARTMENTS,
   getDepartmentForSubject,
   getTeacherHodDesignation,
+  canAssignStaffRole,
   canAccessSystemBackup,
   canManageStaffAuth
 } from '../utils/rbacAndAuth';
@@ -191,8 +192,9 @@ interface AppContextType {
 
   // Teachers, Form Tutor & Subject Assignments + Passwordless Creation / First-Login / Reset Flow
   teachers: Teacher[];
-  addTeacher: (teacher: Omit<Teacher, 'id'>) => Teacher;
+  addTeacher: (teacher: Omit<Teacher, 'id'>) => Promise<Teacher>;
   updateTeacher: (id: number, data: Partial<Teacher>) => void;
+  updateTeacherSystemRole: (teacherId: number, systemRole: UserRole) => Promise<{ ok: boolean; message: string }>;
   updateTeacherCredentials: (input: {
     teacherId: number;
     username: string;
@@ -1804,45 +1806,136 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   // Teachers & Form Tutor Assignment (Created with generated 4-digit PIN; forces password setup on first login)
-  const addTeacher = useCallback((data: Omit<Teacher, 'id'>): Teacher => {
+  const addTeacher = useCallback(async (data: Omit<Teacher, 'id'>): Promise<Teacher> => {
     const cleanUsername = (data.username?.trim() || generateTeacherUsername(data.fullName)).toLowerCase();
-    const generatedPin =
-      data.initialPin && /^\d{4}$/.test(data.initialPin.trim())
-        ? data.initialPin.trim()
-        : generateFourDigitPin();
+    const systemRole =
+      data.systemRole || (data.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER');
+    if (!canAssignStaffRole(currentRole, systemRole)) {
+      throw new Error('You are not authorized to assign this staff role.');
+    }
+
+    const response = await fetch('/api/auth/register-passwordless', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: cleanUsername,
+        fullName: data.fullName,
+        role: systemRole,
+        baseRole: data.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER'
+      })
+    });
+    const result = await response.json() as {
+      ok?: boolean;
+      error?: string;
+      account?: { initialPin?: string };
+      reassignedUsernames?: string[];
+    };
+    const generatedPin = result.account?.initialPin;
+    if (!response.ok || !result.ok || !generatedPin || !/^\d{4}$/.test(generatedPin)) {
+      throw new Error(result.error || 'Could not create the staff login account.');
+    }
+
     const newTeacher: Teacher = {
       ...data,
       id: Date.now(),
       username: cleanUsername,
       initialPin: generatedPin,
+      systemRole,
       assignedSubjects: data.assignedSubjects || [],
       mustSetPassword: data.mustSetPassword ?? true,
       hasPasswordSet: data.hasPasswordSet ?? false,
       passwordResetRequested: false
     };
+    const reassignedUsernames = new Set(
+      Array.isArray(result.reassignedUsernames)
+        ? result.reassignedUsernames.map(username => username.toLowerCase())
+        : []
+    );
     setTeachers(prev => {
       // If a section is assigned to this new teacher, unassign it from any previous form tutor
-      const cleaned = data.assignedSectionId
-        ? prev.map(t => (t.assignedSectionId === data.assignedSectionId ? { ...t, assignedSectionId: undefined } : t))
-        : prev;
+      const cleaned = prev.map(t => ({
+        ...t,
+        ...(t.username && reassignedUsernames.has(t.username.toLowerCase())
+          ? { systemRole: t.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' as const : 'CLASS_TEACHER' as const }
+          : {}),
+        ...(data.assignedSectionId && t.assignedSectionId === data.assignedSectionId
+          ? { assignedSectionId: undefined }
+          : {})
+      }));
       return [...cleaned, newTeacher];
     });
     if (data.assignedSectionId) {
       setClassSections(prev => prev.map(sec => sec.id === data.assignedSectionId ? { ...sec, classTeacherName: data.fullName } : sec));
     }
-    fetch('/api/auth/register-passwordless', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: cleanUsername,
-        fullName: newTeacher.fullName,
-        initialPin: generatedPin,
-        role: newTeacher.systemRole || (newTeacher.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER')
-      })
-    }).catch(() => {});
     setLastAutoSavedTime(new Date().toLocaleTimeString());
     return newTeacher;
-  }, []);
+  }, [currentRole]);
+
+  const updateTeacherSystemRole = useCallback(async (
+    teacherId: number,
+    systemRole: UserRole
+  ): Promise<{ ok: boolean; message: string }> => {
+    const teacher = teachers.find(item => item.id === teacherId);
+    if (!teacher?.username) {
+      return { ok: false, message: 'The staff account has no username and cannot be updated.' };
+    }
+    const currentStaffRole =
+      teacher.systemRole || (teacher.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER');
+    if (
+      teacher.id === currentUser.id ||
+      teacher.username.toLowerCase() === currentUser.username?.toLowerCase() ||
+      !canAssignStaffRole(currentRole, currentStaffRole) ||
+      !canAssignStaffRole(currentRole, systemRole)
+    ) {
+      return { ok: false, message: 'You are not authorized to assign this staff role.' };
+    }
+
+    try {
+      const response = await fetch('/api/auth/update-staff-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: teacher.username,
+          role: systemRole,
+          baseRole: teacher.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER'
+        })
+      });
+      const result = await response.json() as {
+        ok?: boolean;
+        error?: string;
+        reassignedUsernames?: string[];
+      };
+      if (!response.ok || !result.ok) {
+        return { ok: false, message: result.error || 'Could not update the staff role.' };
+      }
+
+      const reassignedUsernames = new Set(
+        Array.isArray(result.reassignedUsernames)
+          ? result.reassignedUsernames.map(username => username.toLowerCase())
+          : []
+      );
+      setTeachers(previous => previous.map(item => {
+        if (item.id === teacherId) return { ...item, systemRole };
+        if (item.username && reassignedUsernames.has(item.username.toLowerCase())) {
+          return {
+            ...item,
+            systemRole: item.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER'
+          };
+        }
+        return item;
+      }));
+      setLastAutoSavedTime(new Date().toLocaleTimeString());
+      return {
+        ok: true,
+        message: reassignedUsernames.size > 0
+          ? `${teacher.fullName}'s role was updated; the previous holder was reassigned without removing their files or comments.`
+          : `${teacher.fullName}'s role was updated.`
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, message: `Could not update the staff role: ${message}` };
+    }
+  }, [currentRole, currentUser.username, teachers]);
 
   const updateTeacher = useCallback((id: number, data: Partial<Teacher>) => {
     setTeachers(prev => {
@@ -2636,6 +2729,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prev.map(doc => {
           if (doc.id !== uploadId) return doc;
           const nowIso = new Date().toISOString();
+          const isHodAction = Boolean(hodReview?.hodStatus || hodInfo.isHod);
           const nextRemarks = cleanRemark
             ? [
                 ...doc.executiveRemarks,
@@ -2644,6 +2738,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                   authorName: resolvedAuthorName,
                   authorRole: currentRole,
                   authorDesignation: resolvedDesignation,
+                  departmentId: isHodAction
+                    ? doc.departmentId || getDepartmentForSubject(doc.subjectId, academicDepartments)?.id
+                    : undefined,
                   actionType:
                     hodReview?.actionType ||
                     (status === 'APPROVED'
@@ -2657,7 +2754,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               ]
             : doc.executiveRemarks;
 
-          const isHodAction = Boolean(hodReview?.hodStatus || hodInfo.isHod);
           const nextHodStatus =
             hodReview?.hodStatus ||
             (isHodAction && status === 'APPROVED'
@@ -4815,6 +4911,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         teachers,
         addTeacher,
         updateTeacher,
+        updateTeacherSystemRole,
         updateTeacherCredentials,
         deleteTeacher,
         assignFormTutor,

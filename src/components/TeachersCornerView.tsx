@@ -17,6 +17,10 @@ import {
   getTeacherHodDesignation,
   getDepartmentForSubject
 } from '../utils/rbacAndAuth';
+import {
+  resolveCurrentHodReviewer,
+  resolveDocumentRemarkAuthorName
+} from '../utils/teacherDocumentReview';
 import { determineGrade } from '../utils/academicCalculations';
 import { formatSortedDocumentDownloadName } from '../utils/documentCacheEngine';
 import { uploadDocumentToCloud } from '../utils/cloudDocumentStorage';
@@ -530,6 +534,16 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     if (!deptNameInput.trim()) return;
     const hodTeacher = teachers.find(t => Number(t.id) === Number(deptHodTeacherId)) || teachers[0];
     if (!hodTeacher) return;
+    const existingDepartment = academicDepartments.find(department => department.id === deptIdBeingEdited);
+    if (
+      existingDepartment &&
+      existingDepartment.hodTeacherId !== hodTeacher.id &&
+      !window.confirm(
+        `Transfer HOD responsibility from ${existingDepartment.hodTeacherName} to ${hodTeacher.fullName}? Uploaded files and comments for this department will remain available.`
+      )
+    ) {
+      return;
+    }
 
     const code =
       deptCodeInput.trim().toUpperCase() ||
@@ -1412,6 +1426,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                     const deptSubNames = subjects
                       .filter(s => dept.subjectIds.map(Number).includes(Number(s.id)))
                       .map(s => s.name);
+                    const currentHod = teachers.find(teacher => teacher.id === dept.hodTeacherId);
                     const deptDocCount = teacherDocumentUploads.filter(
                       d =>
                         d.departmentId === dept.id ||
@@ -1438,7 +1453,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                             <p className="text-xs text-emerald-900 font-bold mt-1 flex items-center space-x-1.5">
                               <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                               <span>
-                                Head of Department (HOD): {dept.hodTeacherName} (@{dept.hodUsername})
+                                Head of Department (HOD): {currentHod?.fullName || dept.hodTeacherName} (@{currentHod?.username || dept.hodUsername})
                               </span>
                             </p>
                           </div>
@@ -1591,7 +1606,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   <option value="ALL">All Departments</option>
                   {academicDepartments.map(dept => (
                     <option key={dept.id} value={dept.id}>
-                      {dept.name} (HOD: {dept.hodTeacherName})
+                      {dept.name} (HOD: {teachers.find(teacher => teacher.id === dept.hodTeacherId)?.fullName || dept.hodTeacherName})
                     </option>
                   ))}
                 </select>
@@ -1728,6 +1743,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   const resolvedDeptName = doc.departmentName || deptObj?.name || 'General Department';
                   const sortedFileName = formatSortedDocumentDownloadName(doc, sortBy, idx);
                   const hodStatus = doc.hodReviewStatus || 'HOD_PENDING';
+                  const hodReviewer = resolveCurrentHodReviewer(doc, teachers, academicDepartments);
 
                   return (
                     <div
@@ -1764,7 +1780,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                               }`}
                             >
                               {hodStatus.replace('_', ' ')}{' '}
-                              {doc.hodReviewedBy ? `(${doc.hodReviewedBy})` : ''}
+                              {hodReviewer ? `(${hodReviewer})` : ''}
                             </span>
                             {/* Executive Status Badge */}
                             <span
@@ -1829,7 +1845,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                             >
                               <div className="flex items-center justify-between text-[11px] font-bold text-indigo-900">
                                 <span>
-                                  {rem.authorName} —{' '}
+                                  {resolveDocumentRemarkAuthorName(rem, teachers, academicDepartments)} —{' '}
                                   <span className="text-emerald-700">
                                     {rem.authorDesignation || rem.authorRole.replace('_', ' ')}
                                   </span>
@@ -2593,7 +2609,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                               className="p-2 rounded-lg bg-white border border-indigo-100 text-xs"
                             >
                               <div className="font-bold text-indigo-950 text-[11px]">
-                                {rem.authorName} ({rem.authorDesignation || rem.authorRole.replace('_', ' ')}):
+                                {resolveDocumentRemarkAuthorName(rem, teachers, academicDepartments)} ({rem.authorDesignation || rem.authorRole.replace('_', ' ')}):
                               </div>
                               <p className="text-slate-700 mt-0.5">{rem.remark}</p>
                             </div>

@@ -17,6 +17,13 @@ import {
   type FullDatabaseSnapshot
 } from '../src/utils/sqlExportGenerator.ts';
 import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
+import { canAssignStaffRole } from '../src/utils/rbacAndAuth.ts';
+import {
+  isDocumentInHodScope,
+  mergeDocumentReviewUpdate,
+  resolveCurrentHodReviewer,
+  resolveDocumentRemarkAuthorName
+} from '../src/utils/teacherDocumentReview.ts';
 
 type UserRole =
   | 'SUPER_ADMIN'
@@ -30,6 +37,7 @@ interface EncryptedUserCredential {
   username: string;
   fullName: string;
   role: UserRole;
+  baseRole?: 'CLASS_TEACHER' | 'SUBJECT_TEACHER';
   initialPin?: string;
   saltHex?: string;
   hashHex?: string;
@@ -400,6 +408,27 @@ function isAdmin(role: UserRole): boolean {
   return ADMIN_ROLES.has(role);
 }
 
+function getHodDepartmentsForTeacher(
+  snapshot: FullDatabaseSnapshot,
+  teacher: FullDatabaseSnapshot['teachers'][number] | undefined,
+  username: string
+) {
+  const normalizedUsername = username.trim().toLowerCase();
+  const normalizedName = teacher?.fullName.trim().toLowerCase();
+  return (snapshot.academicDepartments || []).filter(
+    department =>
+      Number(department.hodTeacherId) === Number(teacher?.id) ||
+      Boolean(
+        normalizedUsername &&
+        department.hodUsername?.trim().toLowerCase() === normalizedUsername
+      ) ||
+      Boolean(
+        normalizedName &&
+        (department.hodTeacherName || '').trim().toLowerCase() === normalizedName
+      )
+  );
+}
+
 function filterSnapshotForStaff(
   snapshot: FullDatabaseSnapshot,
   identity: { username: string; record: EncryptedUserCredential }
@@ -408,6 +437,7 @@ function filterSnapshotForStaff(
   const teacher = snapshot.teachers.find(
     item => (item.username || '').toLowerCase() === identity.username
   );
+  const hodDepartments = getHodDepartmentsForTeacher(snapshot, teacher, identity.username);
   const sectionIds = new Set<number>();
   const subjectIds = new Set<number>();
   if (teacher?.assignedSectionId) sectionIds.add(teacher.assignedSectionId);
@@ -447,6 +477,26 @@ function filterSnapshotForStaff(
       );
       return { ...template, studentCustomScores };
     });
+  const visibleDocuments = (snapshot.teacherDocumentUploads || []).filter(
+    document =>
+      document.teacherId === teacher?.id ||
+      isDocumentInHodScope(document, hodDepartments) ||
+      (sectionIds.has(document.sectionId) && subjectFilter(document.subjectId))
+  );
+  const displayedDocuments = visibleDocuments.map(document => ({
+    ...document,
+    hodReviewedBy:
+      resolveCurrentHodReviewer(document, snapshot.teachers, snapshot.academicDepartments || []) ||
+      document.hodReviewedBy,
+    executiveRemarks: document.executiveRemarks.map(remark => ({
+      ...remark,
+      authorName: resolveDocumentRemarkAuthorName(
+        remark,
+        snapshot.teachers,
+        snapshot.academicDepartments || []
+      )
+    }))
+  }));
   const scoped: FullDatabaseSnapshot = {
     ...snapshot,
     classSections: sections,
@@ -476,17 +526,11 @@ function filterSnapshotForStaff(
       String(message.recipientTeacherId) === String(teacher?.id) ||
       message.senderName === teacher?.fullName
     ),
-    teacherDocumentUploads: (snapshot.teacherDocumentUploads || []).filter(
-      document =>
-        document.teacherId === teacher?.id ||
-        (sectionIds.has(document.sectionId) && subjectFilter(document.subjectId))
-    ),
+    teacherDocumentUploads: displayedDocuments,
     studentTestimonials: (snapshot.studentTestimonials || []).filter(testimonial =>
       studentIds.has(testimonial.studentId)
     ),
-    academicDepartments: (snapshot.academicDepartments || []).filter(
-      department => department.hodTeacherId === teacher?.id
-    )
+    academicDepartments: hodDepartments
   };
   return scoped;
 }
@@ -500,6 +544,7 @@ function mergeScopedSnapshot(
   const teacher = current.teachers.find(
     item => (item.username || '').toLowerCase() === identity.username
   );
+  const hodDepartments = getHodDepartmentsForTeacher(current, teacher, identity.username);
   const sectionIds = new Set<number>();
   const subjectIds = new Set<number>();
   if (teacher?.assignedSectionId) sectionIds.add(teacher.assignedSectionId);
@@ -566,7 +611,16 @@ function mergeScopedSnapshot(
       ...(submitted.officeMessages || []).filter(message => message.senderName === teacher?.fullName)
     ],
     teacherDocumentUploads: [
-      ...(current.teacherDocumentUploads || []).filter(document => document.teacherId !== teacher?.id),
+      ...(current.teacherDocumentUploads || [])
+        .filter(document => document.teacherId !== teacher?.id)
+        .map(document => {
+          if (!isDocumentInHodScope(document, hodDepartments)) return document;
+          const submittedDocument = submitted.teacherDocumentUploads?.find(
+            item => item.id === document.id
+          );
+          if (!submittedDocument) return document;
+          return mergeDocumentReviewUpdate(document, submittedDocument);
+        }),
       ...(submitted.teacherDocumentUploads || []).filter(document => document.teacherId === teacher?.id)
     ]
   };
@@ -816,20 +870,42 @@ app.post('/api/auth/register-passwordless', async (request: AuthenticatedRequest
     const username = String(request.body?.username || '').trim().toLowerCase();
     const fullName = String(request.body?.fullName || '').trim();
     const role = String(request.body?.role || 'CLASS_TEACHER') as UserRole;
+    const baseRole = String(request.body?.baseRole || 'CLASS_TEACHER') as 'CLASS_TEACHER' | 'SUBJECT_TEACHER';
     if (!username || !fullName || !USER_ROLES.has(role)) {
       response.status(400).json({ ok: false, error: 'Valid name, username, and staff role are required.' });
       return;
     }
-    if (role === 'SUPER_ADMIN' && request.auth?.record.role !== 'SUPER_ADMIN') {
-      response.status(403).json({ ok: false, error: 'Only a Super Admin can create another Super Admin.' });
+    if (!['CLASS_TEACHER', 'SUBJECT_TEACHER'].includes(baseRole)) {
+      response.status(400).json({ ok: false, error: 'A valid teaching role is required.' });
+      return;
+    }
+    if (!canAssignStaffRole(request.auth!.record.role, role)) {
+      response.status(403).json({ ok: false, error: 'You are not authorized to assign this staff role.' });
       return;
     }
     const vault = await loadVault();
+    if (vault[username]) {
+      response.status(409).json({ ok: false, error: 'A staff account with this username already exists.' });
+      return;
+    }
+    const reassignedUsernames: string[] = [];
+    if (role !== 'CLASS_TEACHER' && role !== 'SUBJECT_TEACHER') {
+      for (const [existingUsername, account] of Object.entries(vault)) {
+        if (account.role !== role) continue;
+        vault[existingUsername] = {
+          ...account,
+          role: account.baseRole || 'CLASS_TEACHER',
+          updatedAt: new Date().toISOString()
+        };
+        reassignedUsernames.push(existingUsername);
+      }
+    }
     const initialPin = crypto.randomInt(1000, 10000).toString();
     const record: EncryptedUserCredential = {
       username,
       fullName,
       role,
+      baseRole,
       initialPin,
       mustSetPassword: true,
       passwordResetRequested: false,
@@ -837,7 +913,62 @@ app.post('/api/auth/register-passwordless', async (request: AuthenticatedRequest
     };
     vault[username] = record;
     await saveVault(vault);
-    response.json({ ok: true, account: { ...record, hasPasswordSet: false } });
+    response.json({
+      ok: true,
+      account: { ...record, hasPasswordSet: false },
+      reassignedUsernames
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/auth/update-staff-role', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response, ADMIN_ROLES))) return;
+    const username = String(request.body?.username || '').trim().toLowerCase();
+    const role = String(request.body?.role || '') as UserRole;
+    const baseRole = String(request.body?.baseRole || '') as 'CLASS_TEACHER' | 'SUBJECT_TEACHER';
+    if (!username || !USER_ROLES.has(role)) {
+      response.status(400).json({ ok: false, error: 'A valid username and staff role are required.' });
+      return;
+    }
+    if (!['CLASS_TEACHER', 'SUBJECT_TEACHER'].includes(baseRole)) {
+      response.status(400).json({ ok: false, error: 'A valid teaching role is required.' });
+      return;
+    }
+    const actorRole = request.auth!.record.role;
+    if (username === request.auth!.username || !canAssignStaffRole(actorRole, role)) {
+      response.status(403).json({ ok: false, error: 'You are not authorized to assign this staff role.' });
+      return;
+    }
+
+    const vault = await loadVault();
+    const target = vault[username];
+    if (!target) {
+      response.status(404).json({ ok: false, error: 'The staff account was not found.' });
+      return;
+    }
+    if (!canAssignStaffRole(actorRole, target.role)) {
+      response.status(403).json({ ok: false, error: 'You are not authorized to manage this staff account.' });
+      return;
+    }
+
+    const reassignedUsernames: string[] = [];
+    if (role !== 'CLASS_TEACHER' && role !== 'SUBJECT_TEACHER') {
+      for (const [existingUsername, account] of Object.entries(vault)) {
+        if (existingUsername === username || account.role !== role) continue;
+        vault[existingUsername] = {
+          ...account,
+          role: account.baseRole || 'CLASS_TEACHER',
+          updatedAt: new Date().toISOString()
+        };
+        reassignedUsernames.push(existingUsername);
+      }
+    }
+    vault[username] = { ...target, role, baseRole, updatedAt: new Date().toISOString() };
+    await saveVault(vault);
+    response.json({ ok: true, role, reassignedUsernames });
   } catch (error) {
     next(error);
   }

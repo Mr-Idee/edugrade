@@ -13,12 +13,15 @@ import {
   ClassSection,
   Subject,
   GradingScaleScope,
-  GradingScaleBand
+  GradingScaleBand,
+  UserRole
 } from '../types/index';
 import {
   canAccessDatabaseConfig,
   canAccessSystemBackup,
   canManageStaffAuth,
+  canAssignStaffRole,
+  getAssignableStaffRoles,
   generateTeacherUsername,
   resolveInstitutionLogoUrl,
   DEFAULT_INSTITUTION_LOGO_DATA_URI
@@ -127,6 +130,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
     teachers,
     addTeacher,
     updateTeacher,
+    updateTeacherSystemRole,
     updateTeacherCredentials,
     deleteTeacher,
     approveTeacherPasswordReset,
@@ -144,6 +148,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
   const canViewDatabaseTab = canAccessDatabaseConfig(currentRole);
   const canViewBackupTab = canAccessSystemBackup(currentRole);
   const canApproveResets = canManageStaffAuth(currentRole);
+  const assignableStaffRoles = getAssignableStaffRoles(currentRole);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const updateZipInputRef = useRef<HTMLInputElement | null>(null);
@@ -463,8 +468,14 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
   const [newTeacherEmail, setNewTeacherEmail] = useState('');
   const [newTeacherPhone, setNewTeacherPhone] = useState('');
   const [newTeacherRole, setNewTeacherRole] = useState<'FORM_TUTOR' | 'SUBJECT_TEACHER' | 'BOTH'>('FORM_TUTOR');
+  const [newTeacherSystemRole, setNewTeacherSystemRole] = useState<UserRole>('CLASS_TEACHER');
   const [newTeacherSectionId, setNewTeacherSectionId] = useState<number | 'NONE'>('NONE');
   const [teacherAddedNotice, setTeacherAddedNotice] = useState<string | null>(null);
+  const [teacherFormError, setTeacherFormError] = useState<string | null>(null);
+  const [isCreatingStaff, setIsCreatingStaff] = useState(false);
+  const [staffRoleNotice, setStaffRoleNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  const [staffRoleDrafts, setStaffRoleDrafts] = useState<Record<number, UserRole>>({});
+  const [savingStaffRoleId, setSavingStaffRoleId] = useState<number | null>(null);
   const [tutorAssignedNotice, setTutorAssignedNotice] = useState<string | null>(null);
   const [editingTeacherId, setEditingTeacherId] = useState<number | null>(null);
   const [editingTeacherName, setEditingTeacherName] = useState('');
@@ -661,41 +672,71 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
   const [editCompMax, setEditCompMax] = useState(0);
 
   // Handle adding a new Teacher without password (generates 4-digit PIN for initial login)
-  const handleAddTeacher = (e: React.FormEvent) => {
+  const handleAddTeacher = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTeacherName.trim()) return;
+    const systemRole = assignableStaffRoles.includes(newTeacherSystemRole)
+      ? newTeacherSystemRole
+      : assignableStaffRoles[0];
+    if (!systemRole) {
+      setTeacherFormError('Your role is not permitted to create staff accounts.');
+      return;
+    }
+    const currentRoleHolder = teachers.find(
+      teacher => teacher.systemRole === systemRole &&
+        systemRole !== 'CLASS_TEACHER' &&
+        systemRole !== 'SUBJECT_TEACHER'
+    );
+    if (
+      currentRoleHolder &&
+      !window.confirm(
+        `Assigning ${systemRole.replace(/_/g, ' ')} to this staff member will transfer the role from ${currentRoleHolder.fullName}. Their uploaded files and comments will remain. Continue?`
+      )
+    ) {
+      return;
+    }
 
     const assignedSecId = newTeacherSectionId === 'NONE' ? null : Number(newTeacherSectionId);
     const staffCode = newTeacherStaffId.trim() || `STAFF-${String(teachers.length + 1).padStart(3, '0')}`;
     const resolvedUsername = (newTeacherUsername.trim() || generateTeacherUsername(newTeacherName)).toLowerCase();
 
-    const createdTeacher = addTeacher({
-      fullName: newTeacherName.trim(),
-      username: resolvedUsername,
-      staffId: staffCode,
-      email: newTeacherEmail.trim(),
-      phone: newTeacherPhone.trim(),
-      assignedSectionId: assignedSecId,
-      role: newTeacherRole,
-      mustSetPassword: true,
-      passwordResetRequested: false,
-      hasPasswordSet: false
-    });
+    setTeacherFormError(null);
+    setTeacherAddedNotice(null);
+    setIsCreatingStaff(true);
+    try {
+      const createdTeacher = await addTeacher({
+        fullName: newTeacherName.trim(),
+        username: resolvedUsername,
+        staffId: staffCode,
+        email: newTeacherEmail.trim(),
+        phone: newTeacherPhone.trim(),
+        assignedSectionId: assignedSecId,
+        role: newTeacherRole,
+        systemRole,
+        mustSetPassword: true,
+        passwordResetRequested: false,
+        hasPasswordSet: false
+      });
 
-    if (assignedSecId !== null) {
-      assignFormTutor(assignedSecId, newTeacherName.trim());
+      if (assignedSecId !== null) {
+        assignFormTutor(assignedSecId, newTeacherName.trim());
+      }
+
+      setNewTeacherName('');
+      setNewTeacherUsername('');
+      setNewTeacherStaffId('');
+      setNewTeacherEmail('');
+      setNewTeacherPhone('');
+      setNewTeacherSectionId('NONE');
+      setTeacherAddedNotice(
+        `Account created for @${resolvedUsername}! Initial 4-Digit Login PIN: ${createdTeacher.initialPin}`
+      );
+      setTimeout(() => setTeacherAddedNotice(null), 6000);
+    } catch (error) {
+      setTeacherFormError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsCreatingStaff(false);
     }
-
-    setNewTeacherName('');
-    setNewTeacherUsername('');
-    setNewTeacherStaffId('');
-    setNewTeacherEmail('');
-    setNewTeacherPhone('');
-    setNewTeacherSectionId('NONE');
-    setTeacherAddedNotice(
-      `Account created for @${resolvedUsername}! Initial 4-Digit Login PIN: ${createdTeacher.initialPin}`
-    );
-    setTimeout(() => setTeacherAddedNotice(null), 6000);
   };
 
   const handleAssignClassTutor = (sectionId: number, teacherValue: string) => {
@@ -1094,7 +1135,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
               activeSubTab === 'teachers' ? 'bg-white text-indigo-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Teachers &amp; Form Tutors ({teachers.length})
+            STAFF ({teachers.length})
           </button>
           <button
             onClick={() => setActiveSubTab('classes')}
@@ -1557,7 +1598,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
         </div>
       )}
 
-      {/* 1B. Teachers & Form Tutors Assignment Management */}
+      {/* 1B. Staff Assignment Management */}
       {activeSubTab === 'teachers' && (
         <div className="space-y-6">
           <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-center justify-between gap-4 text-xs text-indigo-950">
@@ -1582,16 +1623,16 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
               <div className="border-b border-slate-100 pb-3">
                 <h3 className="text-sm font-bold text-slate-900 flex items-center space-x-1.5">
                   <Users className="w-4 h-4 text-indigo-600" />
-                  <span>Create Teacher Account (No Password Needed)</span>
+                  <span>Create Staff Account (No Password Needed)</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Enter only <strong>Full Name</strong> and <strong>Username</strong>. On first login, the teacher is required to set a personal password.
+                  Enter the staff details and assign an authorized system role. On first login, staff set a personal password.
                 </p>
               </div>
 
               <div className="space-y-3 text-xs">
                 <div>
-                  <label className="block font-bold text-slate-700 uppercase mb-1 text-[11px]">Teacher Full Name &amp; Title *</label>
+                  <label className="block font-bold text-slate-700 uppercase mb-1 text-[11px]">Staff Full Name &amp; Title *</label>
                   <input
                     type="text"
                     data-testid="new-teacher-fullname-input"
@@ -1649,6 +1690,22 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                 </div>
 
                 <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1 text-[11px]">System Role *</label>
+                  <select
+                    value={assignableStaffRoles.includes(newTeacherSystemRole)
+                      ? newTeacherSystemRole
+                      : assignableStaffRoles[0] || ''}
+                    onChange={event => setNewTeacherSystemRole(event.target.value as UserRole)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-semibold"
+                    required
+                  >
+                    {assignableStaffRoles.map(role => (
+                      <option key={role} value={role}>{role.replace(/_/g, ' ')}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className="block font-bold text-slate-700 uppercase mb-1 text-[11px]">
                     Assign as Form Tutor to Class (Optional)
                   </label>
@@ -1687,18 +1744,36 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                     ✓ {teacherAddedNotice}
                   </div>
                 )}
+                {teacherFormError && (
+                  <div role="alert" className="p-2.5 rounded-xl bg-rose-50 border border-rose-300 text-xs text-rose-800 font-bold">
+                    {teacherFormError}
+                  </div>
+                )}
                 <button
                   type="submit"
                   data-testid="create-teacher-submit-btn"
+                  disabled={assignableStaffRoles.length === 0 || isCreatingStaff}
                   className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-colors shadow-sm cursor-pointer"
                 >
-                  Create Teacher Account &amp; Generate 4-Digit PIN
+                  {isCreatingStaff ? 'Creating Staff Account...' : 'Create Staff Account & Generate 4-Digit PIN'}
                 </button>
               </div>
             </form>
 
             {/* Class Form Tutor Assignment Matrix */}
             <div className="lg:col-span-2 space-y-6">
+              {staffRoleNotice && (
+                <div
+                  role={staffRoleNotice.ok ? 'status' : 'alert'}
+                  className={`rounded-xl border p-3 text-xs font-bold ${
+                    staffRoleNotice.ok
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                      : 'border-rose-200 bg-rose-50 text-rose-800'
+                  }`}
+                >
+                  {staffRoleNotice.message}
+                </div>
+              )}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                   <div>
@@ -1892,11 +1967,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                 </p>
               </div>
 
-              {/* Registered Teachers Directory */}
+              {/* Registered Staff Directory */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                   <h4 className="text-xs font-black text-slate-900 uppercase tracking-wide">
-                    Registered School Teachers ({teachers.length})
+                    Registered Staff ({teachers.length})
                   </h4>
                   <span className="text-xs text-slate-400">Click Edit to rename or manage staff</span>
                 </div>
@@ -1906,6 +1981,9 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                     const assignedClass = classSections.find(c => c.id === t.assignedSectionId || c.classTeacherName === t.fullName);
                     const isEditing = editingTeacherId === t.id;
                     const uname = t.username || generateTeacherUsername(t.fullName);
+                    const systemRole = t.systemRole || (t.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER');
+                    const roleDraft = staffRoleDrafts[t.id] || systemRole;
+                    const canEditStaffRole = canAssignStaffRole(currentRole, systemRole);
                     const needsFirstSetup = t.mustSetPassword !== false && !t.hasPasswordSet;
                     const resetRequested = Boolean(t.passwordResetRequested);
 
@@ -1998,6 +2076,9 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                 <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
                                   {t.staffId}
                                 </span>
+                                <span className="text-[10px] font-bold bg-violet-50 text-violet-800 border border-violet-200 px-1.5 py-0.5 rounded">
+                                  {systemRole.replace(/_/g, ' ')}
+                                </span>
                                 {assignedClass && (
                                   <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
                                     Form Tutor: {assignedClass.name}
@@ -2055,6 +2136,66 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                             </div>
 
                             <div className="flex items-center space-x-1.5 shrink-0">
+                              {canEditStaffRole && (
+                                <div className="flex items-center gap-1">
+                                  <select
+                                    aria-label={`System role for ${t.fullName}`}
+                                    value={roleDraft}
+                                    onChange={event => {
+                                      setStaffRoleDrafts(previous => ({
+                                        ...previous,
+                                        [t.id]: event.target.value as UserRole
+                                      }));
+                                      setStaffRoleNotice(null);
+                                    }}
+                                    className="max-w-40 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[10px] font-bold text-slate-800"
+                                  >
+                                    {assignableStaffRoles.map(role => (
+                                      <option key={role} value={role}>{role.replace(/_/g, ' ')}</option>
+                                    ))}
+                                  </select>
+                                  {roleDraft !== systemRole && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const currentRoleHolder = teachers.find(
+                                          item =>
+                                            item.id !== t.id &&
+                                            item.systemRole === roleDraft &&
+                                            roleDraft !== 'CLASS_TEACHER' &&
+                                            roleDraft !== 'SUBJECT_TEACHER'
+                                        );
+                                        if (
+                                          currentRoleHolder &&
+                                          !window.confirm(
+                                            `Transfer ${roleDraft.replace(/_/g, ' ')} from ${currentRoleHolder.fullName} to ${t.fullName}? Their uploaded files and comments will remain.`
+                                          )
+                                        ) {
+                                          return;
+                                        }
+                                        setSavingStaffRoleId(t.id);
+                                        try {
+                                          const result = await updateTeacherSystemRole(t.id, roleDraft);
+                                          setStaffRoleNotice(result);
+                                          if (result.ok) {
+                                            setStaffRoleDrafts(previous => {
+                                              const next = { ...previous };
+                                              delete next[t.id];
+                                              return next;
+                                            });
+                                          }
+                                        } finally {
+                                          setSavingStaffRoleId(null);
+                                        }
+                                      }}
+                                      disabled={savingStaffRoleId === t.id}
+                                      className="rounded-lg bg-violet-600 px-2.5 py-1.5 text-[10px] font-bold text-white"
+                                    >
+                                      {savingStaffRoleId === t.id ? 'Saving…' : 'Save role'}
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                               {canApproveResets && (
                                 <button
                                   type="button"
