@@ -13,23 +13,29 @@ export interface BeforeInstallPromptEvent extends Event {
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [isRunningStandalone, setIsRunningStandalone] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
+    const standaloneQuery = window.matchMedia('(display-mode: standalone)');
+    const isStandalone = () =>
+      standaloneQuery.matches ||
       (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-    setIsInstalled(isStandalone);
+    const runningStandalone = isStandalone();
+    setIsInstalled(runningStandalone);
+    setIsRunningStandalone(runningStandalone);
 
     const userAgent = window.navigator.userAgent.toLowerCase();
     const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
-    const isMobileDevice = /android|iphone|ipad|ipod|mobile/.test(userAgent);
+    const isIPadOSDevice = /macintosh/.test(userAgent) && window.navigator.maxTouchPoints > 1;
+    const isMobileDevice = /android|iphone|ipad|ipod|mobile/.test(userAgent) || isIPadOSDevice;
     setIsIOS(isIOSDevice);
     setIsMobile(isMobileDevice);
 
+    const handleDisplayModeChange = () => setIsRunningStandalone(isStandalone());
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
@@ -42,10 +48,12 @@ export function usePWAInstall() {
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
+    standaloneQuery.addEventListener('change', handleDisplayModeChange);
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      standaloneQuery.removeEventListener('change', handleDisplayModeChange);
     };
   }, []);
 
@@ -64,6 +72,7 @@ export function usePWAInstall() {
   return {
     isInstallable: !!deferredPrompt,
     isInstalled,
+    isRunningStandalone,
     isIOS,
     isMobile,
     install,

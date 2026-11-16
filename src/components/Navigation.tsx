@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { UserRole } from '../types/index';
 import {
@@ -20,6 +20,7 @@ import {
   getTeacherHodDesignation
 } from '../utils/rbacAndAuth';
 import { createSupabaseAuthClient } from '../utils/supabaseAuthClient';
+import { usePWAInstall } from '../utils/usePWAInstall';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
   Home,
@@ -43,8 +44,6 @@ import {
   EyeOff,
   UserCheck,
   Briefcase,
-  ChevronLeft,
-  ChevronRight
 } from 'lucide-react';
 
 interface NavigationProps {
@@ -53,6 +52,7 @@ interface NavigationProps {
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab }) => {
+  const { isRunningStandalone, isMobile } = usePWAInstall();
   const {
     schoolProfile,
     currentRole,
@@ -82,6 +82,8 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
 
   // Floating Action Button (FAB) fluid menu state
   const [isFabMenuOpen, setIsFabMenuOpen] = useState(false);
+  const [isBottomNavigationVisible, setIsBottomNavigationVisible] = useState(true);
+  const isDesktopPwa = isRunningStandalone && !isMobile;
 
   // Staff Login / First-Time Password Setup / Forgot Password Modal State
   const [authStep, setAuthStep] = useState<'LOGIN' | 'FIRST_TIME_SETUP' | 'FORGOT_PASSWORD'>('LOGIN');
@@ -561,39 +563,23 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
 
   const visibleNavItems = navItems.filter(item => item.visible);
   const pendingResetCount = teachers.filter(t => t.passwordResetRequested).length;
-  const navScrollRef = useRef<HTMLElement | null>(null);
-
-  const handleSlideNavTabs = (direction: 'left' | 'right') => {
-    // 1. Scroll the horizontal navigation bar smoothly
-    if (navScrollRef.current) {
-      const offset = direction === 'left' ? -240 : 240;
-      navScrollRef.current.scrollBy({ left: offset, behavior: 'smooth' });
-    }
-    // 2. Also slide active tab left or right across Home Overview and other visible tabs
-    const currentIndex = visibleNavItems.findIndex(
-      item => item.id === activeTab || (item.id === 'grid' && activeTab === 'registry')
-    );
-    if (currentIndex !== -1 && visibleNavItems.length > 1) {
-      const nextIndex =
-        direction === 'left'
-          ? (currentIndex - 1 + visibleNavItems.length) % visibleNavItems.length
-          : (currentIndex + 1) % visibleNavItems.length;
-      const targetTab = visibleNavItems[nextIndex];
-      if (targetTab) {
-        setActiveTab(targetTab.id);
-      }
-    }
-  };
 
   useEffect(() => {
-    if (!navScrollRef.current) return;
-    const activeBtn = navScrollRef.current.querySelector(
-      `[data-testid="nav-tab-${activeTab === 'registry' ? 'grid' : activeTab}"]`
-    ) as HTMLElement | null;
-    if (activeBtn && typeof activeBtn.scrollIntoView === 'function') {
-      activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    if (!isDesktopPwa) {
+      setIsBottomNavigationVisible(true);
+      return;
     }
-  }, [activeTab]);
+
+    let previousScrollY = window.scrollY;
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      setIsBottomNavigationVisible(currentScrollY <= 0 || currentScrollY < previousScrollY);
+      previousScrollY = currentScrollY;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [isDesktopPwa]);
 
   return (
     <>
@@ -770,72 +756,6 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
           </div>
         </div>
 
-        {/* Primary Desktop/Tablet Navigation Tabs with Left & Right Slide Arrows */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-800/80">
-          <div className="flex items-center gap-1.5 py-2">
-            <button
-              type="button"
-              data-testid="nav-slide-left"
-              aria-label="Slide Navigation Left"
-              onClick={() => handleSlideNavTabs('left')}
-              title="Slide Tabs Left (Previous Tab)"
-              className="w-8 h-9 rounded-lg bg-slate-800/90 hover:bg-indigo-600 text-slate-300 hover:text-white border border-slate-700 flex items-center justify-center shrink-0 transition-colors cursor-pointer"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-
-            <nav
-              ref={navScrollRef}
-              aria-label="Main Navigation"
-              className="min-w-0 flex-1 flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth"
-            >
-              {visibleNavItems.map(item => {
-                const Icon = item.icon;
-                const isActive =
-                  activeTab === item.id || (item.id === 'grid' && activeTab === 'registry');
-                const isRestrictedWhenLocked = !isStaffLoggedIn && item.id !== 'home';
-
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    data-testid={`nav-tab-${item.id}`}
-                    onClick={() => setActiveTab(item.id)}
-                    className={`flex items-center space-x-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap cursor-pointer min-h-[38px] ${
-                      isActive
-                        ? item.accent
-                          ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
-                          : 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
-                        : isRestrictedWhenLocked
-                        ? 'text-slate-400 hover:text-white hover:bg-slate-800/90 border border-slate-800'
-                        : item.accent
-                        ? 'text-amber-300/80 hover:text-amber-200 hover:bg-amber-950/40'
-                        : 'text-slate-300 hover:text-white hover:bg-slate-800'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
-                    <span>{item.label}</span>
-                    {isRestrictedWhenLocked && (
-                      <Lock className="w-3.5 h-3 text-rose-400/90 ml-1 shrink-0" />
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-
-            <button
-              type="button"
-              data-testid="nav-slide-right"
-              aria-label="Slide Navigation Right"
-              onClick={() => handleSlideNavTabs('right')}
-              title="Slide Tabs Right (Next Tab)"
-              className="w-8 h-9 rounded-lg bg-slate-800/90 hover:bg-indigo-600 text-slate-300 hover:text-white border border-slate-700 flex items-center justify-center shrink-0 transition-colors cursor-pointer"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
         {/* Welcome User Notification Banner */}
         {welcomeNotification && (
           <div
@@ -859,6 +779,55 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
           </div>
         )}
       </header>
+
+      {isDesktopPwa && (
+        <nav
+          aria-label="Desktop PWA navigation"
+          data-testid="desktop-pwa-bottom-nav"
+          className={`fixed bottom-4 left-1/2 z-40 hidden max-w-[calc(100vw-2rem)] -translate-x-1/2 items-end gap-2 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-2 shadow-xl backdrop-blur-md transition-all duration-300 ease-out min-[1024px]:flex ${
+            isBottomNavigationVisible
+              ? 'translate-y-0 opacity-100'
+              : 'translate-y-24 pointer-events-none opacity-0'
+          }`}
+        >
+          {visibleNavItems.map(item => {
+            const Icon = item.icon;
+            const isActive =
+              activeTab === item.id || (item.id === 'grid' && activeTab === 'registry');
+            const isRestrictedWhenLocked = !isStaffLoggedIn && item.id !== 'home';
+
+            return (
+              <div key={item.id} className="group relative flex flex-col items-center">
+                <span className="pointer-events-none absolute bottom-full left-1/2 mb-3 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  {item.label}
+                </span>
+                <button
+                  type="button"
+                  data-testid={`desktop-pwa-tab-${item.id}`}
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setIsFabMenuOpen(false);
+                    setIsBottomNavigationVisible(true);
+                  }}
+                  className={`relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full transition-all duration-300 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
+                    isActive
+                      ? '-translate-y-2 scale-110 bg-white text-indigo-600 shadow-[0_8px_24px_rgba(79,70,229,0.35)] ring-2 ring-indigo-500/80'
+                      : 'bg-transparent text-slate-700 drop-shadow-[0_2px_6px_rgba(15,23,42,0.3)] hover:-translate-y-1 hover:scale-105'
+                  }`}
+                >
+                  <Icon className="h-6 w-6" aria-hidden="true" />
+                  {isRestrictedWhenLocked && (
+                    <Lock className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full bg-white p-0.5 text-rose-500 shadow" />
+                  )}
+                  {isActive && <span className="absolute -bottom-1 h-1.5 w-1.5 rounded-full bg-amber-400" />}
+                </button>
+              </div>
+            );
+          })}
+        </nav>
+      )}
 
       {/* ===================================================================== */}
       {/* FLOATING ACTION BUTTON (FAB) WITH FLUID ANIMATION FOR MOBILE & DESKTOP */}
