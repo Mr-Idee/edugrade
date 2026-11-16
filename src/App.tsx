@@ -167,13 +167,13 @@ function MainAppContent() {
   const effectiveTab: TabType = isStaffLoggedIn ? activeTab : 'home';
 
   return (
-    <div className="min-h-screen bg-slate-100/70 text-slate-800 flex flex-col font-sans pb-20 sm:pb-0">
+    <div className="min-h-screen min-w-0 bg-slate-100/70 text-slate-800 flex flex-col font-sans pb-20 sm:pb-0">
       {/* Top App Header, Role Switcher, Staff Auth Modal & Floating Action Button (FAB) */}
       <Navigation activeTab={effectiveTab} setActiveTab={handleGuardedTabChange} />
       {isStaffLoggedIn && <OfflineChangesNotice />}
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 print:p-0 print:m-0 print:max-w-none">
+      <main className="flex-1 min-w-0 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 print:p-0 print:m-0 print:max-w-none">
         <Suspense fallback={<div className="py-12 text-center text-slate-500" role="status">Loading section…</div>}>
           {effectiveTab === 'home' && (
             <HomeView

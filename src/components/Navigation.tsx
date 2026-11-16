@@ -600,7 +600,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
       <header className="bg-slate-900 text-white shadow-lg border-b border-slate-800 print:hidden">
         {/* Top Institutional Bar */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center space-x-3">
+          <div className="flex min-w-0 items-center space-x-3">
             <button
               type="button"
               onClick={() => setActiveTab('home')}
@@ -616,9 +616,9 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
                 }}
               />
             </button>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center space-x-2">
-                <span className="text-base sm:text-xl font-bold tracking-tight text-white">
+                <span className="break-words text-base sm:text-xl font-bold tracking-tight text-white">
                   {schoolProfile.name}
                 </span>
                 <span className="hidden md:inline-block px-2 py-0.5 text-xs font-semibold rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
@@ -654,7 +654,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
                 aria-label="Class Section Selector"
                 value={selectedSectionId}
                 onChange={(e) => setSelectedSectionId(Number(e.target.value))}
-                className="bg-transparent text-xs font-semibold text-amber-300 focus:outline-none cursor-pointer"
+                className="min-w-0 max-w-[190px] bg-transparent text-xs font-semibold text-amber-300 focus:outline-none cursor-pointer sm:max-w-none"
               >
                 {classSections.map((sec) => (
                   <option key={sec.id} value={sec.id} className="bg-slate-800 text-white">
@@ -741,7 +741,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
               {isRoleMenuOpen && (
                 <div
                   data-testid="role-switcher-menu"
-                  className="absolute right-0 mt-1.5 w-64 bg-slate-800 rounded-xl shadow-2xl border border-slate-700 p-1.5 z-50"
+                  className="absolute left-0 right-auto mt-1.5 w-64 max-w-[calc(100vw-2rem)] bg-slate-800 rounded-xl shadow-2xl border border-slate-700 p-1.5 z-50 sm:left-auto sm:right-0"
                 >
                   <div className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-700">
                     Switch Active Role (5 Roles)
@@ -787,7 +787,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
             <nav
               ref={navScrollRef}
               aria-label="Main Navigation"
-              className="flex-1 flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth"
+              className="min-w-0 flex-1 flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth"
             >
               {visibleNavItems.map(item => {
                 const Icon = item.icon;

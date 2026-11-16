@@ -638,29 +638,29 @@ export const ReportCardView: React.FC = () => {
       <div
         key={student.id}
         data-testid={index === 0 ? 'printable-report-sheet' : `printable-report-sheet-${student.id}`}
-        className={`max-w-4xl mx-auto bg-white border border-slate-400 shadow-xl overflow-hidden print:border-none print:shadow-none print:m-0 print:p-0 print:max-w-none text-slate-900 font-sans ${
+        className={`w-full min-w-0 max-w-4xl mx-auto bg-white border border-slate-400 shadow-xl overflow-hidden print:border-none print:shadow-none print:m-0 print:p-0 print:max-w-none text-slate-900 font-sans ${
           !isLastInBatch ? 'print-page-break mb-8 print:mb-0' : ''
         }`}
       >
         {/* Distinctive Color Bar distinguishing Standard vs Custom Report Card */}
         <div
           data-testid={index === 0 ? 'report-card-format-color-bar' : undefined}
-          className={`px-4 py-2 text-xs font-black uppercase tracking-wider flex items-center justify-between ${
+          className={`min-w-0 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-3 sm:px-4 py-2 text-xs font-black uppercase tracking-wider ${
             activeCustomTemplate
               ? CUSTOM_COLOR_BAR_CLASSES[activeCustomTemplate.colorBarTheme || 'EMERALD'] ||
                 CUSTOM_COLOR_BAR_CLASSES.EMERALD
               : 'bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-amber-300'
           }`}
         >
-          <span className="flex items-center space-x-2">
+          <span className="min-w-0 flex items-center space-x-2">
             <Palette className="w-3.5 h-3.5" />
-            <span>
+            <span className="min-w-0 break-words">
               {activeCustomTemplate
                 ? `CUSTOM REPORT CARD: ${activeCustomTemplate.title}`
                 : 'OFFICIAL REPORT CARD SHEET'}
             </span>
           </span>
-          <span className="font-mono text-[11px]">
+          <span className="max-w-full break-words font-mono text-[11px]">
             {student.isRecordSealed
               ? `SIGNED: ${student.recordSignature || 'GRADUATED'} (SEALED)`
               : `${currentSection.name} • ${currentTerm.name} TERM`}
@@ -680,7 +680,7 @@ export const ReportCardView: React.FC = () => {
         )}
 
         {/* Outer Border Frame */}
-        <div className="border-4 border-slate-900 m-3 p-4 sm:p-6 print:m-0 print:border-2 print:p-2">
+        <div className="min-w-0 border-4 border-slate-900 m-1.5 p-2 sm:m-3 sm:p-6 print:m-0 print:border-2 print:p-2">
           {/* Official School Crest (Imported from Master Settings Logo Upload) */}
           <div className="flex justify-center mb-1 print:mb-0">
             <img
@@ -718,7 +718,7 @@ export const ReportCardView: React.FC = () => {
           </div>
 
           {/* Student & Class Row */}
-          <div className="border-x border-b border-slate-900 px-4 py-1.5 flex flex-wrap justify-between text-xs font-bold uppercase bg-white">
+          <div className="border-x border-b border-slate-900 px-2 sm:px-4 py-1.5 flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs font-bold uppercase bg-white">
             <div>
               <span>CLASS: </span>
               <span className="font-black">{currentSection.name}</span>
@@ -1418,11 +1418,11 @@ export const ReportCardView: React.FC = () => {
     <div className="space-y-5">
       {/* Top Controls & Term/Cumulative Configuration Bar (Hidden on Print) */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 print:hidden space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-4">
           {/* Navigation & Selectors */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex w-full min-w-0 flex-wrap items-end gap-3 sm:w-auto">
             {/* Report Card Format Dropdown BEFORE Class Section (Standard + Enabled Custom Report Cards) */}
-            <div>
+            <div className="w-full min-w-0 sm:w-auto">
               <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-600">
                 Report Card Format
               </label>
@@ -1431,7 +1431,7 @@ export const ReportCardView: React.FC = () => {
                 data-testid="report-card-format-dropdown"
                 value={activeReportCardTemplateId}
                 onChange={e => setActiveReportCardTemplateId(e.target.value)}
-                className={`px-3 py-1.5 border rounded-xl text-xs sm:text-sm font-black cursor-pointer ${
+                className={`w-full max-w-full px-3 py-1.5 border rounded-xl text-xs sm:w-auto sm:text-sm font-black cursor-pointer ${
                   activeCustomTemplate
                     ? 'bg-emerald-50 border-emerald-400 text-emerald-950'
                     : 'bg-indigo-50/70 border-indigo-300 text-indigo-950'
@@ -1447,7 +1447,7 @@ export const ReportCardView: React.FC = () => {
             </div>
 
             {/* Class Section (Filtered to selected classes when a Custom Report Card is active) */}
-            <div>
+            <div className="w-full min-w-0 sm:w-auto">
               <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 Class Section {activeCustomTemplate ? `(${visibleClassSections.length} Assigned)` : ''}
               </label>
@@ -1456,7 +1456,7 @@ export const ReportCardView: React.FC = () => {
                 data-testid="report-card-class-section-dropdown"
                 value={selectedSectionId}
                 onChange={e => setSelectedSectionId(Number(e.target.value))}
-                className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-800"
+                className="w-full max-w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:w-auto sm:text-sm font-semibold text-slate-800"
               >
                 {visibleClassSections.map(s => (
                   <option key={s.id} value={s.id}>
@@ -1467,7 +1467,7 @@ export const ReportCardView: React.FC = () => {
             </div>
 
             {/* Student Picker */}
-            <div>
+            <div className="w-full min-w-0 sm:w-auto">
               <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 Active Student
               </label>
@@ -1478,7 +1478,7 @@ export const ReportCardView: React.FC = () => {
                   setSelectedStudentId(Number(e.target.value));
                   setIsBatchClassMode(false);
                 }}
-                className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-indigo-900"
+                className="w-full max-w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:w-auto sm:max-w-[260px] sm:text-sm font-semibold text-indigo-900"
               >
                 {sectionStudents.map(st => (
                   <option key={st.id} value={st.id}>
