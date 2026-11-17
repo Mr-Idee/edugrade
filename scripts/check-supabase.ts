@@ -78,17 +78,30 @@ async function main(): Promise<void> {
     );
   }
 
-  const { error: scoreFunctionError } = await supabase.rpc('save_score_state', {
+  const scoreSaveArgs = {
     p_changes: [],
     p_deletes: [],
     p_audit_logs: [],
-    p_expected_revision: 'deployment-check-invalid-revision'
-  });
-  if (scoreFunctionError?.code !== '40001') {
+    p_expected_revision: state?.state_revision || null
+  };
+  const { data: scoreSaveRows, error: scoreFunctionError } = await supabase.rpc(
+    'save_score_state',
+    state ? scoreSaveArgs : { ...scoreSaveArgs, p_changes: {} }
+  );
+  if (state) {
+    const savedScoreState = Array.isArray(scoreSaveRows) ? scoreSaveRows[0] : scoreSaveRows;
+    if (scoreFunctionError || savedScoreState?.state_revision !== state.state_revision) {
+      throw new Error(
+        scoreFunctionError
+          ? `Could not validate incremental score saves: ${scoreFunctionError.code} ${scoreFunctionError.message}`
+          : 'Supabase did not return the current revision for a no-op score save.'
+      );
+    }
+  } else if (scoreFunctionError?.code !== '22023') {
     throw new Error(
       scoreFunctionError
         ? `Could not validate incremental score saves: ${scoreFunctionError.code} ${scoreFunctionError.message}`
-        : 'Supabase accepted an incremental score save with an invalid revision.'
+        : 'Supabase accepted an invalid incremental score payload.'
     );
   }
 
