@@ -381,6 +381,7 @@ interface AppContextType {
 
   // Node.js + MySQL (phpMyAdmin) Backend Sync & Publishing
   backendStatus: BackendDatabaseStatus;
+  backendSavePaused: boolean;
   isOnline: boolean;
   pendingOfflineSnapshot: PendingOfflineSnapshot<FullDatabaseSnapshot> | null;
   pendingOfflineDocumentCount: number;
@@ -1263,6 +1264,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isSyncing: false,
     statusMessage: null
   });
+  const [backendSavePaused, setBackendSavePaused] = useState(false);
   const [backendHydrated, setBackendHydrated] = useState(false);
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine
@@ -4011,6 +4013,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         backendBaseSnapshotRef.current = persistedSnapshot;
         backendRevisionRef.current = stateData.stateRevision || null;
         backendConflictRef.current = false;
+        setBackendSavePaused(false);
         const snapshot = persistedSnapshot || (
           queuedChanges
             ? reconcileExecutiveStaffSnapshot(queuedChanges.snapshot)
@@ -4561,6 +4564,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (isRevisionConflict) {
           backendConflictRef.current = true;
           backendSyncPendingRef.current = false;
+          setBackendSavePaused(true);
         }
         const shouldQueueOffline = shouldQueueOfflineChanges(
           typeof navigator === 'undefined' || navigator.onLine,
@@ -5144,6 +5148,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         importSystemBackupFile,
         deleteSystemBackup,
         backendStatus,
+        backendSavePaused,
         isOnline,
         pendingOfflineSnapshot,
         pendingOfflineDocumentCount,

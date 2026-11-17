@@ -53,6 +53,7 @@ function MainAppContent() {
     officeMessages,
     schoolProfile,
     currentSession,
+    backendSavePaused,
     setSelectedStudentId,
     setSelectedSectionId,
     setSelectedSubjectId
@@ -265,6 +266,23 @@ function MainAppContent() {
       {/* Top App Header, Role Switcher, Staff Auth Modal & Floating Action Button (FAB) */}
       <Navigation activeTab={effectiveTab} setActiveTab={handleGuardedTabChange} />
       {isStaffLoggedIn && <OfflineChangesNotice />}
+      {isStaffLoggedIn && backendSavePaused && (
+        <div className="mx-auto mt-3 w-full max-w-7xl px-3 sm:px-6 lg:px-8" role="alert">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <p>
+              Automatic saving is paused because the database changed in another session.
+              Reload to get the latest records. Unsaved changes in this tab may be lost.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 font-semibold text-white hover:bg-amber-800"
+            >
+              Reload records
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Container */}
       <main className="flex-1 min-w-0 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 print:p-0 print:m-0 print:max-w-none">
