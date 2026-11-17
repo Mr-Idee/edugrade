@@ -210,13 +210,8 @@ function getRequiredEnvironment(name: string): string {
 function getSupabase(): SupabaseClient {
   if (supabaseClient) return supabaseClient;
   const url = getRequiredEnvironment('SUPABASE_URL');
-  const serviceKey =
-    process.env.SUPABASE_SECRET_KEY?.trim() ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-  if (!serviceKey) {
-    throw new Error('Missing required server environment variable: SUPABASE_SECRET_KEY');
-  }
-  supabaseClient = createClient(url, serviceKey, {
+  const secretKey = getRequiredEnvironment('SUPABASE_SECRET_KEY');
+  supabaseClient = createClient(url, secretKey, {
     auth: { autoRefreshToken: false, persistSession: false }
   });
   return supabaseClient;
