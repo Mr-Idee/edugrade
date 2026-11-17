@@ -2014,7 +2014,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
 
                 <div
                   data-testid="registered-staff-scroll"
-                  className="grid grid-flow-col auto-cols-[85%] gap-3 overflow-x-auto overflow-y-hidden p-3 snap-x sm:auto-cols-[45%] lg:auto-cols-[calc((100%-3rem)/5)]"
+                  className="divide-y divide-slate-100 max-h-[720px] overflow-y-auto"
                 >
                   {teachers.map(t => {
                     const assignedClass = classSections.find(c => c.id === t.assignedSectionId || c.classTeacherName === t.fullName);
@@ -2029,7 +2029,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                     return (
                       <div
                         key={t.id}
-                        className="min-w-0 snap-start rounded-xl border border-slate-200 bg-white p-3.5 text-xs hover:bg-slate-50 flex flex-col justify-between gap-3"
+                        className="p-3.5 hover:bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
                       >
                         {isEditing ? (
                           <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">

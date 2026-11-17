@@ -1275,6 +1275,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const pendingOfflineSnapshotRef = useRef<PendingOfflineSnapshot<FullDatabaseSnapshot> | null>(null);
   const backendBaseSnapshotRef = useRef<FullDatabaseSnapshot | null>(null);
   const backendRevisionRef = useRef<string | null>(null);
+  const backendSyncInFlightRef = useRef(false);
+  const backendSyncPendingRef = useRef(false);
+  const syncToBackendRef = useRef<(() => Promise<{
+    savedToDatabase: boolean;
+    savedToNodeDisk: boolean;
+    message: string;
+  }>) | null>(null);
   const buildSnapshotRef = useRef<(() => FullDatabaseSnapshot) | null>(null);
   const persistOfflineSnapshotRef = useRef<
     ((snapshot: FullDatabaseSnapshot) => Promise<PendingOfflineSnapshot<FullDatabaseSnapshot>>) | null
@@ -1353,7 +1360,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     void checkDatabaseHealth();
-    const interval = window.setInterval(() => void checkDatabaseHealth(), 10000);
+    const interval = window.setInterval(() => void checkDatabaseHealth(), 30000);
     return () => {
       active = false;
       window.clearInterval(interval);
@@ -4485,6 +4492,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: 'No database changes to save.'
       };
     }
+    if (backendSyncInFlightRef.current) {
+      backendSyncPendingRef.current = true;
+      return {
+        savedToDatabase: false,
+        savedToNodeDisk: false,
+        message: 'A database save is in progress; the latest changes will sync afterward.'
+      };
+    }
+    backendSyncInFlightRef.current = true;
+    let shouldDrainPendingSync = true;
     setBackendStatus(prev => ({ ...prev, isSyncing: true }));
     let requestStarted = false;
     try {
@@ -4502,6 +4519,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const data = await res.json();
         const savedToDatabase = Boolean(data.savedToDatabase);
         const savedToNodeDisk = Boolean(data.savedToNodeDisk);
+        shouldDrainPendingSync = savedToDatabase;
         const message = savedToDatabase
           ? 'Synced to Supabase PostgreSQL'
           : data.errorMessage || (savedToNodeDisk
@@ -4528,18 +4546,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else {
         const data = await res.json().catch(() => null);
         const message = data?.error || `Database sync failed (HTTP ${res.status})`;
-        if (shouldQueueOfflineChanges(
+        const shouldQueueOffline = shouldQueueOfflineChanges(
           typeof navigator === 'undefined' || navigator.onLine,
           res.status
-        )) {
+        );
+        if (shouldQueueOffline) {
           try {
             await persistOfflineSnapshot(snapshot);
+            shouldDrainPendingSync = true;
           } catch (error) {
+            shouldDrainPendingSync = false;
             setOfflineSyncMessage(
               `${message}. Offline queue failed: ${error instanceof Error ? error.message : String(error)}`
             );
           }
         } else {
+          shouldDrainPendingSync = false;
           setOfflineSyncMessage(`${message}. This was not queued as an offline change.`);
         }
         setBackendStatus(prev => ({
@@ -4560,6 +4582,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } catch (error) {
       const message = `Database sync failed: ${error instanceof Error ? error.message : String(error)}`;
+      shouldDrainPendingSync = false;
       const browserOnline = typeof navigator === 'undefined' || navigator.onLine;
       const isOfflineFailure = shouldQueueOfflineChanges(
         browserOnline,
@@ -4569,6 +4592,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (isOfflineFailure) {
         try {
           await persistOfflineSnapshot(snapshot);
+          shouldDrainPendingSync = true;
         } catch (queueError) {
           setOfflineSyncMessage(
             `${message}. Offline queue failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`
@@ -4589,8 +4613,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         savedToNodeDisk: false,
         message
       };
+    } finally {
+      backendSyncInFlightRef.current = false;
+      if (backendSyncPendingRef.current) {
+        backendSyncPendingRef.current = false;
+        if (shouldDrainPendingSync) {
+          window.setTimeout(() => {
+            void syncToBackendRef.current?.();
+          }, 0);
+        }
+      }
     }
   }, [backendHydrated, buildSnapshot, persistOfflineSnapshot]);
+  syncToBackendRef.current = syncToBackend;
 
   const commitOfflineChanges = useCallback(async (
     resolutions: Record<string, OfflineConflictResolution> = {}
@@ -4955,12 +4990,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     URL.revokeObjectURL(url);
   }, [buildSnapshot, backendStatus.dbName]);
 
-  // Debounce nearby edits so a score entry does not immediately rewrite cloud state.
+  // Batch nearby edits and serialize overlapping database writes.
   useEffect(() => {
     if (!backendHydrated) return;
     const timer = setTimeout(() => {
       syncToBackend();
-    }, 650);
+    }, 1500);
     return () => clearTimeout(timer);
   }, [backendHydrated, syncToBackend]);
 

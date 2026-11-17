@@ -15,7 +15,8 @@ import {
 } from '../src/utils/offlineSyncEngine.ts';
 import {
   areNonScoreSnapshotValuesEqual,
-  collectScoreStateChanges
+  collectScoreStateChanges,
+  rebaseScoreStateChanges
 } from '../src/utils/scoreStateStorage.ts';
 import {
   normalizeEnrollmentIds,
@@ -821,37 +822,78 @@ async function saveState(
     ? stateSnapshotCache.get(expectedRevision)
     : undefined;
   const currentState = cachedState || await loadCachedState();
-  const existingAuditIds = new Set(
-    (currentState?.state_json.auditLogs || []).map(log => log.id)
-  );
-  const newAuditLogs = (snapshot.auditLogs || []).filter(log => !existingAuditIds.has(log.id));
-  const persistedSnapshot = omitSessionArchives({
-    ...snapshot,
-    auditLogs: []
-  }) as FullDatabaseSnapshot;
   const scoreOnlyChange = Boolean(
     currentState && areNonScoreSnapshotValuesEqual(currentState.state_json, snapshot)
   );
-  const scoreChanges = currentState
+  if (
+    scoreOnlyChange &&
+    currentState &&
+    expectedRevision &&
+    currentState.state_revision !== expectedRevision
+  ) {
+    const conflict = new Error('School records changed while you were editing. Reload before saving.');
+    Object.assign(conflict, { status: 409 });
+    throw conflict;
+  }
+  let writeBase = currentState;
+  let writeSnapshot = snapshot;
+  let writeRevision = expectedRevision;
+  let scoreChanges = currentState
     ? collectScoreStateChanges(currentState.state_json, snapshot)
     : { upserts: [], deletes: [] };
+  const getNewAuditLogs = (base: StateRow | null, next: FullDatabaseSnapshot) => {
+    const existingIds = new Set((base?.state_json.auditLogs || []).map(log => log.id));
+    return (next.auditLogs || []).filter(log => !existingIds.has(log.id));
+  };
+  let newAuditLogs = getNewAuditLogs(writeBase, writeSnapshot);
   let result = scoreOnlyChange
     ? await getSupabase().rpc('save_score_state', {
         p_changes: scoreChanges.upserts,
         p_deletes: scoreChanges.deletes,
         p_audit_logs: newAuditLogs,
-        p_expected_revision: expectedRevision
+        p_expected_revision: writeRevision
       })
     : await getSupabase().rpc('save_app_state', {
-        p_state: persistedSnapshot,
-        p_expected_revision: expectedRevision,
+        p_state: omitSessionArchives({ ...writeSnapshot, auditLogs: [] }),
+        p_expected_revision: writeRevision,
         p_audit_logs: newAuditLogs
       });
 
+  for (let attempt = 0; scoreOnlyChange && result.error?.code === '40001' && attempt < 2; attempt += 1) {
+    const latest = await loadState();
+    if (!latest || !writeBase) break;
+    const rebasedSnapshot = rebaseScoreStateChanges(
+      writeBase.state_json,
+      latest.state_json,
+      writeSnapshot,
+      scoreChanges
+    );
+    if (!rebasedSnapshot) {
+      const conflict = new Error(
+        'This score was changed by another user. Reload the latest records before saving again.'
+      );
+      Object.assign(conflict, { status: 409 });
+      throw conflict;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 25 + Math.floor(Math.random() * 76)));
+    writeBase = latest;
+    writeSnapshot = rebasedSnapshot;
+    writeRevision = latest.state_revision;
+    scoreChanges = collectScoreStateChanges(latest.state_json, rebasedSnapshot);
+    newAuditLogs = getNewAuditLogs(latest, rebasedSnapshot);
+    result = await getSupabase().rpc('save_score_state', {
+      p_changes: scoreChanges.upserts,
+      p_deletes: scoreChanges.deletes,
+      p_audit_logs: newAuditLogs,
+      p_expected_revision: writeRevision
+    });
+  }
+
   if (scoreOnlyChange && result.error && ['PGRST202', '42883'].includes(result.error.code || '')) {
     result = await getSupabase().rpc('save_app_state', {
-      p_state: persistedSnapshot,
-      p_expected_revision: expectedRevision,
+      p_state: omitSessionArchives({ ...writeSnapshot, auditLogs: [] }),
+      p_expected_revision: writeRevision,
       p_audit_logs: newAuditLogs
     });
   }
@@ -861,8 +903,8 @@ async function saveState(
       warnedMissingScoreAuditMigration = true;
     }
     result = await getSupabase().rpc('save_app_state', {
-      p_state: omitSessionArchives(snapshot),
-      p_expected_revision: expectedRevision
+      p_state: omitSessionArchives(writeSnapshot),
+      p_expected_revision: writeRevision
     });
   }
   const { data, error } = result;
@@ -879,8 +921,11 @@ async function saveState(
     throw new Error('Supabase saved the state but returned no revision metadata.');
   }
   const saved = { stateRevision: row.state_revision, updatedAt: row.updated_at };
+  const cachedSnapshot = writeBase && writeSnapshot !== snapshot
+    ? writeSnapshot
+    : snapshot;
   stateSnapshotCache.set(saved.stateRevision, {
-    state_json: omitSessionArchives(snapshot) as FullDatabaseSnapshot,
+    state_json: omitSessionArchives(cachedSnapshot) as FullDatabaseSnapshot,
     state_revision: saved.stateRevision,
     updated_at: saved.updatedAt
   });
