@@ -1,5 +1,5 @@
-import type { FullDatabaseSnapshot } from './sqlExportGenerator';
-import { areOfflineValuesEqual } from './offlineSyncEngine';
+import type { FullDatabaseSnapshot } from './sqlExportGenerator.ts';
+import { areOfflineValuesEqual } from './offlineSyncEngine.ts';
 
 export type ScoreStateRecordType = 'scores' | 'termSubjectRecords' | 'termSummaries';
 
