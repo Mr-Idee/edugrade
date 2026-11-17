@@ -1864,7 +1864,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                             )}
                             {teachers.map(t => (
                               <option key={t.id} value={t.fullName}>
-                                {t.fullName} ({t.staffId})
+                                {t.fullName}{t.staffId ? ` (${t.staffId})` : ''}
                               </option>
                             ))}
                           </select>
@@ -2012,7 +2012,10 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                   <span className="text-xs text-slate-400">Click Edit to rename or manage staff</span>
                 </div>
 
-                <div className="divide-y divide-slate-100 max-h-[340px] overflow-y-auto">
+                <div
+                  data-testid="registered-staff-scroll"
+                  className="grid grid-flow-col auto-cols-[85%] gap-3 overflow-x-auto overflow-y-hidden p-3 snap-x sm:auto-cols-[45%] lg:auto-cols-[calc((100%-3rem)/5)]"
+                >
                   {teachers.map(t => {
                     const assignedClass = classSections.find(c => c.id === t.assignedSectionId || c.classTeacherName === t.fullName);
                     const isEditing = editingTeacherId === t.id;
@@ -2024,7 +2027,10 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                     const resetRequested = Boolean(t.passwordResetRequested);
 
                     return (
-                      <div key={t.id} className="p-3.5 hover:bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div
+                        key={t.id}
+                        className="min-w-0 snap-start rounded-xl border border-slate-200 bg-white p-3.5 text-xs hover:bg-slate-50 flex flex-col justify-between gap-3"
+                      >
                         {isEditing ? (
                           <div className="grid flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
                             <label className="text-[10px] font-bold uppercase text-slate-500">
@@ -2109,9 +2115,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                 >
                                   Initial 4-Digit PIN: {t.initialPin || 'Not set'}
                                 </span>
-                                <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                                  {t.staffId}
-                                </span>
+                                {t.staffId && (
+                                  <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                                    {t.staffId}
+                                  </span>
+                                )}
                                 <span className="text-[10px] font-bold bg-violet-50 text-violet-800 border border-violet-200 px-1.5 py-0.5 rounded">
                                   {systemRole.replace(/_/g, ' ')}
                                 </span>
@@ -2135,9 +2143,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-slate-400 mt-0.5">
-                                {t.email} • {t.phone}
-                              </div>
+                              {(t.email || t.phone) && (
+                                <div className="text-[11px] text-slate-400 mt-0.5">
+                                  {[t.email, t.phone].filter(Boolean).join(' • ')}
+                                </div>
+                              )}
                               {/* Assigned Subjects Badges */}
                               <div className="flex flex-wrap items-center gap-1 mt-1.5">
                                 <span className="text-[10px] font-bold text-slate-500 uppercase mr-1">
@@ -2171,9 +2181,9 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                               </div>
                             </div>
 
-                            <div className="flex items-center space-x-1.5 shrink-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               {canEditStaffRole && (
-                                <div className="flex items-center gap-1">
+                                <div className="flex flex-wrap items-center gap-1">
                                   <select
                                     aria-label={`System role for ${t.fullName}`}
                                     value={roleDraft}

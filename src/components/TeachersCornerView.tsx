@@ -13,15 +13,18 @@ import {
   TeacherDocumentUpload
 } from '../types/index';
 import {
+  generateTeacherUsername,
   getTeachersCornerTabTitle,
   getTeacherHodDesignation,
   getDepartmentForSubject
 } from '../utils/rbacAndAuth';
+import { canAccessStudentComments } from '../utils/studentCommentPolicy';
+import { calculateStudentCommentScores } from '../utils/studentCommentCalculations';
 import {
   resolveCurrentHodReviewer,
   resolveDocumentRemarkAuthorName
 } from '../utils/teacherDocumentReview';
-import { determineGrade } from '../utils/academicCalculations';
+import { determineGrade, getTermStructureForLevel } from '../utils/academicCalculations';
 import { formatSortedDocumentDownloadName } from '../utils/documentCacheEngine';
 import { uploadDocumentToCloud } from '../utils/cloudDocumentStorage';
 import {
@@ -119,7 +122,9 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     students,
     enrollments,
     termSubjectRecords,
+    termSummaries,
     updateTermSubjectScore,
+    updateRemarks,
     officeMessages,
     sendOfficeMessage,
     markOfficeMessageAsRead,
@@ -149,9 +154,9 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
   const baseOfficeTitle = getTeachersCornerTabTitle(currentRole);
 
   // All staff use the same materials, profile, and messages workspace.
-  const [activeWorkspace, setActiveWorkspace] = useState<'TEACHER_CORNER' | 'EXECUTIVE_OFFICE' | 'PROFILE'>(
-    'TEACHER_CORNER'
-  );
+  const [activeWorkspace, setActiveWorkspace] = useState<
+    'TEACHER_CORNER' | 'EXECUTIVE_OFFICE' | 'PROFILE' | 'STUDENT_COMMENTS'
+  >('TEACHER_CORNER');
 
   // Messages Drawer / Modal
   const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
@@ -169,6 +174,126 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
   }, [teachers, currentUser]);
 
   const cornerTeacher = activeTeacher;
+  const canManageSchoolwideStudentComments = [
+    'PRINCIPAL',
+    'VICE_PRINCIPAL',
+    'HEAD_OF_SCHOOLS'
+  ].includes(currentRole);
+  const canUseStudentComments = canAccessStudentComments(
+    currentRole,
+    currentRole === 'CLASS_TEACHER' && Boolean(activeTeacher?.assignedSectionId)
+  );
+  const commentSections = useMemo(
+    () =>
+      canManageSchoolwideStudentComments
+        ? classSections
+        : classSections.filter(section => section.id === activeTeacher?.assignedSectionId),
+    [canManageSchoolwideStudentComments, classSections, activeTeacher?.assignedSectionId]
+  );
+  const [selectedCommentSectionId, setSelectedCommentSectionId] = useState(0);
+  useEffect(() => {
+    if (!commentSections.some(section => section.id === selectedCommentSectionId)) {
+      setSelectedCommentSectionId(commentSections[0]?.id || 0);
+    }
+  }, [commentSections, selectedCommentSectionId]);
+  const commentSection = commentSections.find(section => section.id === selectedCommentSectionId);
+  const commentSectionStudents = useMemo(
+    () =>
+      students
+        .filter(student => student.currentSectionId === commentSection?.id)
+        .sort((a, b) => a.fullName.localeCompare(b.fullName)),
+    [students, commentSection?.id]
+  );
+  const [selectedCommentStudentId, setSelectedCommentStudentId] = useState(0);
+  useEffect(() => {
+    if (!commentSectionStudents.some(student => student.id === selectedCommentStudentId)) {
+      setSelectedCommentStudentId(commentSectionStudents[0]?.id || 0);
+    }
+  }, [commentSectionStudents, selectedCommentStudentId]);
+  const selectedCommentStudent = commentSectionStudents.find(
+    student => student.id === selectedCommentStudentId
+  );
+  const selectedCommentSummary = termSummaries.find(
+    summary =>
+      summary.studentId === selectedCommentStudentId &&
+      summary.sectionId === selectedCommentSectionId &&
+      summary.termId === currentTerm.id
+  );
+  const savedStudentComment = selectedCommentSummary?.teacherRemark || '';
+  const [studentCommentDraft, setStudentCommentDraft] = useState('');
+  const [studentCommentNotice, setStudentCommentNotice] = useState<string | null>(null);
+  useEffect(() => {
+    setStudentCommentDraft(savedStudentComment);
+    setStudentCommentNotice(null);
+  }, [
+    selectedCommentStudentId,
+    selectedCommentSectionId,
+    currentTerm.id,
+    savedStudentComment
+  ]);
+  const selectedCommentScores = useMemo(() => {
+    if (!selectedCommentStudent || !commentSection) return null;
+
+    const applicableSubjects = subjects.filter(
+      subject =>
+        subject.applicableLevel === commentSection.levelType ||
+        subject.applicableLevel === 'BOTH'
+    );
+    const structure = getTermStructureForLevel(commentSection.levelType, currentTerm.name);
+    const scoreEntries = applicableSubjects.map(subject => {
+      const enrollment = enrollments.find(
+        item =>
+          item.studentId === selectedCommentStudent.id &&
+          item.sectionId === commentSection.id &&
+          item.subjectId === subject.id &&
+          item.termId === currentTerm.id
+      );
+      const isIncluded =
+        commentSection.levelType === 'JUNIOR'
+          ? true
+          : enrollment?.isIncluded ?? subject.category === 'CORE';
+
+      const record = termSubjectRecords.find(
+        item =>
+          item.studentId === selectedCommentStudent.id &&
+          item.subjectId === subject.id &&
+          item.termId === currentTerm.id
+      );
+      return {
+        isIncluded,
+        ca1Score: record?.ca1Score || 0,
+        ca2Score: record?.ca2Score || 0,
+        totalScore: record?.totalScore || 0
+      };
+    });
+    return calculateStudentCommentScores(
+      scoreEntries,
+      commentSection.levelType,
+      structure.rawCaMax
+    );
+  }, [
+    selectedCommentStudent,
+    commentSection,
+    subjects,
+    currentTerm.id,
+    currentTerm.name,
+    enrollments,
+    termSubjectRecords
+  ]);
+  const printableStudentComments = useMemo(
+    () =>
+      commentSectionStudents.map(student => ({
+        student,
+        comment:
+          termSummaries.find(
+            summary =>
+              summary.studentId === student.id &&
+              summary.sectionId === commentSection?.id &&
+              summary.termId === currentTerm.id
+          )?.teacherRemark || ''
+      })),
+    [commentSectionStudents, termSummaries, commentSection?.id, currentTerm.id]
+  );
   const [selectedTeacherIdForCorner, setSelectedTeacherIdForCorner] = useState<number>(
     activeTeacher?.id || 0
   );
@@ -831,6 +956,16 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       .sort((a, b) => a.weekNumber - b.weekNumber);
   }, [teacherDocumentUploads, cornerTeacher]);
 
+  const handlePrintStudentComments = () => {
+    document.body.classList.add('student-comments-print');
+    window.addEventListener(
+      'afterprint',
+      () => document.body.classList.remove('student-comments-print'),
+      { once: true }
+    );
+    window.print();
+  };
+
   return (
     <div data-testid="teachers-corner-view" className="space-y-6">
       {/* ================================================================= */}
@@ -880,6 +1015,23 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
             <Upload className="h-4 w-4" />
             Upload Materials
           </button>
+
+          {canUseStudentComments && (
+            <button
+              type="button"
+              data-testid="office-student-comments-tab"
+              onClick={() => setActiveWorkspace('STUDENT_COMMENTS')}
+              aria-pressed={activeWorkspace === 'STUDENT_COMMENTS'}
+              className={`inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-bold transition-colors ${
+                activeWorkspace === 'STUDENT_COMMENTS'
+                  ? 'border-emerald-500 bg-emerald-600 text-white'
+                  : 'border-slate-700 bg-slate-800 text-white hover:bg-slate-700'
+              }`}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Students comments
+            </button>
+          )}
 
           <button
             type="button"
@@ -1178,7 +1330,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                       <option value="ALL">All Teaching Staff (Broadcast)</option>
                       {teachers.map(t => (
                         <option key={t.id} value={t.id}>
-                          {t.fullName} (@{t.username})
+                          {t.fullName} (@{t.username || generateTeacherUsername(t.fullName)})
                         </option>
                       ))}
                     </select>
@@ -1479,7 +1631,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   >
                     {teachers.map(t => (
                       <option key={t.id} value={t.id}>
-                        {t.fullName} (@{t.username}) — {t.role.replace('_', ' ')}
+                        {t.fullName} (@{t.username || generateTeacherUsername(t.fullName)}) — {t.role.replace('_', ' ')}
                       </option>
                     ))}
                   </select>
@@ -1559,6 +1711,9 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                       .filter(s => dept.subjectIds.map(Number).includes(Number(s.id)))
                       .map(s => s.name);
                     const currentHod = teachers.find(teacher => teacher.id === dept.hodTeacherId);
+                    const hodUsername =
+                      currentHod?.username ||
+                      (currentHod ? generateTeacherUsername(currentHod.fullName) : dept.hodUsername);
                     const deptDocCount = teacherDocumentUploads.filter(
                       d =>
                         d.departmentId === dept.id ||
@@ -1585,7 +1740,8 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                             <p className="text-xs text-emerald-900 font-bold mt-1 flex items-center space-x-1.5">
                               <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                               <span>
-                                Head of Department (HOD): {currentHod?.fullName || dept.hodTeacherName} (@{currentHod?.username || dept.hodUsername})
+                                Head of Department (HOD): {currentHod?.fullName || dept.hodTeacherName}
+                                {hodUsername ? ` (@${hodUsername})` : ''}
                               </span>
                             </p>
                           </div>
@@ -2027,10 +2183,188 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
         </div>
       )}
 
+      {canUseStudentComments && activeWorkspace === 'STUDENT_COMMENTS' && (
+        <section data-testid="student-comments-workspace" className="space-y-5">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-lg font-black text-slate-900">Students comments</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Save the form tutor&apos;s comment to the {currentTerm.name} term report card.
+                </p>
+              </div>
+              <span className="rounded-full bg-indigo-50 px-3 py-1 text-[11px] font-black uppercase text-indigo-800">
+                {currentTerm.name} TERM • {currentSession.name}
+              </span>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {canManageSchoolwideStudentComments ? (
+                <label className="text-[11px] font-bold uppercase text-slate-600">
+                  Class
+                  <select
+                    data-testid="student-comments-class-select"
+                    value={selectedCommentSectionId}
+                    onChange={event => {
+                      setSelectedCommentSectionId(Number(event.target.value));
+                      setStudentCommentNotice(null);
+                    }}
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm normal-case text-slate-900"
+                  >
+                    {commentSections.map(section => (
+                      <option key={section.id} value={section.id}>{section.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <div className="text-[11px] font-bold uppercase text-slate-600">
+                  Form tutor class
+                  <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold normal-case text-slate-900">
+                    {commentSection?.name || 'No form class assigned'}
+                  </div>
+                </div>
+              )}
+              <label className="text-[11px] font-bold uppercase text-slate-600">
+                Student
+                <select
+                  data-testid="student-comments-student-select"
+                  value={selectedCommentStudentId}
+                  onChange={event => {
+                    setSelectedCommentStudentId(Number(event.target.value));
+                    setStudentCommentNotice(null);
+                  }}
+                  disabled={commentSectionStudents.length === 0}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm normal-case text-slate-900 disabled:bg-slate-100"
+                >
+                  {commentSectionStudents.length === 0 ? (
+                    <option value={0}>No students in this class</option>
+                  ) : (
+                    commentSectionStudents.map(student => (
+                      <option key={student.id} value={student.id}>{student.fullName}</option>
+                    ))
+                  )}
+                </select>
+              </label>
+            </div>
+
+            {selectedCommentStudent && selectedCommentScores && (
+              <>
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                  <div className="mb-3 text-sm font-black text-indigo-950">
+                    {selectedCommentStudent.fullName} • Current term performance
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-[10px] font-bold uppercase text-slate-500">CA total score</div>
+                      <div data-testid="student-comment-ca-total" className="mt-1 text-lg font-black text-slate-900">
+                        {selectedCommentScores.caTotal.toFixed(1)} / {selectedCommentScores.caMaximum.toFixed(1)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-[10px] font-bold uppercase text-slate-500">Total average</div>
+                      <div data-testid="student-comment-total-average" className="mt-1 text-lg font-black text-slate-900">
+                        {selectedCommentScores.totalAverage === null
+                          ? '—'
+                          : `${selectedCommentScores.totalAverage.toFixed(1)}%`}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white p-3">
+                      <div className="text-[10px] font-bold uppercase text-slate-500">Total grade</div>
+                      <div data-testid="student-comment-total-grade" className="mt-1 text-lg font-black text-emerald-800">
+                        {selectedCommentScores.totalGrade}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <label className="block text-[11px] font-bold uppercase text-slate-600">
+                  Form tutor comment
+                  <textarea
+                    data-testid="student-comment-input"
+                    aria-label="Form tutor comment"
+                    value={studentCommentDraft}
+                    onChange={event => {
+                      setStudentCommentDraft(event.target.value);
+                      setStudentCommentNotice(null);
+                    }}
+                    rows={5}
+                    maxLength={3000}
+                    placeholder="Write a comment for this student’s report card."
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-normal normal-case text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </label>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span role="status" data-testid="student-comment-save-status" className="text-xs font-semibold text-emerald-700">
+                    {studentCommentNotice || (studentCommentDraft === savedStudentComment ? 'Comment is up to date.' : 'Unsaved changes')}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      data-testid="student-comment-save"
+                      disabled={studentCommentDraft === savedStudentComment}
+                      onClick={() => {
+                        const comment = studentCommentDraft.trim();
+                        updateRemarks(selectedCommentStudent.id, undefined, comment);
+                        setStudentCommentDraft(comment);
+                        setStudentCommentNotice('Comment saved to the student’s report card.');
+                      }}
+                      className="rounded-lg bg-indigo-700 px-4 py-2 text-xs font-black text-white hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Save comment
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="student-comments-print"
+                      onClick={handlePrintStudentComments}
+                      disabled={!commentSection || commentSectionStudents.length === 0}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <FileText className="h-4 w-4" />
+                      Print class comments / Save as PDF
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div data-student-comments-print className="hidden print:block bg-white text-black">
+            <h1 className="mb-1 text-2xl font-black">Students comments</h1>
+            <p className="mb-4 text-sm">
+              {commentSection?.name || 'Class'} • {currentTerm.name} TERM • {currentSession.name}
+            </p>
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  <th className="border border-black p-2 text-left">#</th>
+                  <th className="border border-black p-2 text-left">Student</th>
+                  <th className="border border-black p-2 text-left">Admission number</th>
+                  <th className="border border-black p-2 text-left">Comment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {printableStudentComments.map(({ student, comment }, index) => (
+                  <tr key={student.id}>
+                    <td className="border border-black p-2">{index + 1}</td>
+                    <td className="border border-black p-2">{student.fullName}</td>
+                    <td className="border border-black p-2">{student.admissionNumber}</td>
+                    <td className="border border-black p-2 whitespace-pre-wrap">
+                      {comment || 'No comment saved'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* ================================================================= */}
       {/* WORKSPACE B: TEACHER'S CORNER & HOD'S OFFICE                      */}
       {/* ================================================================= */}
-      {(!isExecutive || activeWorkspace === 'TEACHER_CORNER') && (
+      {activeWorkspace !== 'STUDENT_COMMENTS' &&
+        (!isExecutive || activeWorkspace === 'TEACHER_CORNER') && (
         <div data-testid="teacher-corner-workspace" className="space-y-6">
           {/* If Executive is previewing Teacher's Corner, let them pick which Teacher's portfolio to inspect */}
           {false && isExecutive && (
@@ -2061,7 +2395,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                     );
                     return (
                       <option key={t.id} value={t.id}>
-                        {t.fullName} (@{t.username})
+                        {t.fullName} (@{t.username || generateTeacherUsername(t.fullName)})
                         {hodCheck.isHod ? ` — [${hodCheck.designationBadge}]` : ''}
                       </option>
                     );

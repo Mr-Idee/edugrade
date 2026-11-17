@@ -49,6 +49,7 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
   } = useApp();
 
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
+  const [scoreView, setScoreView] = useState<'ALL' | 'SECOND_CA' | 'EXAM'>('ALL');
   const classScrollRef = useRef<HTMLDivElement | null>(null);
 
   const currentSheet = oldSheets[selectedSheetIndex] || oldSheets[0];
@@ -364,6 +365,31 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
     currentSheet.students.length
   ]);
 
+  const selectedComponentSummary = useMemo(() => {
+    if (scoreView === 'ALL') return null;
+
+    const includedRows = studentSubjectScoreRows.filter(row => row.isIncluded);
+    const maxPerSubject =
+      scoreView === 'SECOND_CA' ? termStructure.ca2Max : termStructure.examMax;
+    const total = includedRows.reduce(
+      (sum, row) => sum + (scoreView === 'SECOND_CA' ? row.ca2Score : row.examScore),
+      0
+    );
+    const maximum = includedRows.length * maxPerSubject;
+    const averagePercentage =
+      maximum > 0 ? Number(((total / maximum) * 100).toFixed(1)) : null;
+
+    return {
+      total: Number(total.toFixed(1)),
+      maximum,
+      averagePercentage,
+      grade:
+        averagePercentage === null
+          ? '—'
+          : determineGrade(averagePercentage, levelType).grade
+    };
+  }, [scoreView, studentSubjectScoreRows, termStructure, levelType]);
+
   const handleScrollClasses = (direction: 'left' | 'right') => {
     if (!classScrollRef.current) return;
     const offset = direction === 'left' ? -280 : 280;
@@ -493,6 +519,7 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
                 sheet.section.toUpperCase().includes('YEAR 12')
                   ? 'SENIOR'
                   : 'JUNIOR')) === 'SENIOR';
+            const sectionLabel = secMatch?.name || sheet.section;
 
             return (
               <button
@@ -513,7 +540,7 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
                 >
                   {sheetNumber}
                 </span>
-                <span>{sheet.section}</span>
+                <span className="shrink-0">{sectionLabel}</span>
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded ${
                     sheetIsSenior
@@ -649,11 +676,19 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
             </div>
 
             {/* Selected Student Summary Box */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 text-xs">
-              <div>
-                <div className="text-[10px] text-slate-400 uppercase font-semibold">Selected Student</div>
-                <div className="font-black text-slate-900 mt-0.5 truncate">{activeStudentSummary.name}</div>
+            <div
+              data-testid="matrix-selected-student-name"
+              className="rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3"
+            >
+              <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+                Selected Student
               </div>
+              <div className="mt-1 break-words text-[clamp(1.25rem,4vw,2.25rem)] font-black leading-tight text-slate-900">
+                {activeStudentSummary.name}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 text-xs">
               <div>
                 <div className="text-[10px] text-slate-400 uppercase font-semibold">{currentTerm.name} Term Rank</div>
                 <div className="font-black text-indigo-700 mt-0.5">{activeStudentSummary.rank}</div>
@@ -695,11 +730,47 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
                   </p>
                 </div>
               </div>
-              <span className="text-xs text-slate-600 font-semibold">
-                {isSenior
-                  ? '1st CA (15) + 2nd CA (15) + Exam (70) = 100%'
-                  : '1st CA (20) + 2nd CA (20) + Exam (60) = 100%'}
-              </span>
+              <div className="flex flex-col items-start gap-2 sm:items-end">
+                <span className="text-xs text-slate-600 font-semibold">
+                  {isSenior
+                    ? '1st CA (15) + 2nd CA (15) + Exam (70) = 100%'
+                    : '1st CA (20) + 2nd CA (20) + Exam (60) = 100%'}
+                </span>
+                <div role="group" aria-label="Select student score view" className="flex flex-wrap gap-1">
+                  {([
+                    ['ALL', 'All scores'],
+                    ['SECOND_CA', '2nd CA'],
+                    ['EXAM', 'Exam']
+                  ] as const).map(([view, label]) => (
+                    <button
+                      key={view}
+                      type="button"
+                      data-testid={`matrix-score-view-${view.toLowerCase()}`}
+                      aria-pressed={scoreView === view}
+                      onClick={() => setScoreView(view)}
+                      className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+                        scoreView === view
+                          ? 'border-indigo-700 bg-indigo-700 text-white'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {selectedComponentSummary && (
+                  <div
+                    data-testid="matrix-selected-component-summary"
+                    className="text-right text-[11px] font-semibold text-slate-700"
+                  >
+                    Total {selectedComponentSummary.total.toFixed(1)} / {selectedComponentSummary.maximum.toFixed(1)}
+                    {' • '}Average {selectedComponentSummary.averagePercentage === null
+                      ? '—'
+                      : `${selectedComponentSummary.averagePercentage.toFixed(1)}%`}
+                    {' • '}Grade {selectedComponentSummary.grade}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -711,25 +782,52 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
                     {isSenior && (
                       <th className="py-2.5 px-2.5 text-center font-bold">Status</th>
                     )}
-                    <th className="py-2.5 px-2.5 text-center font-bold">
-                      1st CA ({termStructure.ca1Max})
-                    </th>
-                    <th className="py-2.5 px-2.5 text-center font-bold">
-                      2nd CA ({termStructure.ca2Max})
-                    </th>
-                    <th className="py-2.5 px-2.5 text-center font-bold">
-                      Exam ({termStructure.examMax})
-                    </th>
-                    <th className="py-2.5 px-2.5 text-center font-bold bg-indigo-950 text-amber-300">
-                      Cum 100%
-                    </th>
+                    {scoreView === 'ALL' ? (
+                      <>
+                        <th className="py-2.5 px-2.5 text-center font-bold">
+                          1st CA ({termStructure.ca1Max})
+                        </th>
+                        <th className="py-2.5 px-2.5 text-center font-bold">
+                          2nd CA ({termStructure.ca2Max})
+                        </th>
+                        <th className="py-2.5 px-2.5 text-center font-bold">
+                          Exam ({termStructure.examMax})
+                        </th>
+                        <th className="py-2.5 px-2.5 text-center font-bold bg-indigo-950 text-amber-300">
+                          Cum 100%
+                        </th>
+                      </>
+                    ) : (
+                      <th className="py-2.5 px-2.5 text-center font-bold">
+                        {scoreView === 'SECOND_CA' ? '2nd CA' : 'Exam'} (
+                        {scoreView === 'SECOND_CA' ? termStructure.ca2Max : termStructure.examMax})
+                      </th>
+                    )}
                     <th className="py-2.5 px-2.5 text-center font-bold">Grade</th>
                     <th className="py-2.5 px-3 font-bold">Remark</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {studentSubjectScoreRows.map((row, idx) => {
-                    const gradeText = row.grade || '-';
+                    const selectedScore =
+                      scoreView === 'SECOND_CA' ? row.ca2Score : row.examScore;
+                    const selectedMaximum =
+                      scoreView === 'SECOND_CA' ? termStructure.ca2Max : termStructure.examMax;
+                    const selectedGradeInfo =
+                      scoreView === 'ALL'
+                        ? null
+                        : determineGrade(
+                            selectedMaximum > 0
+                              ? (selectedScore / selectedMaximum) * 100
+                              : 0,
+                            levelType
+                          );
+                    const gradeText = row.isIncluded
+                      ? selectedGradeInfo?.grade || row.grade || '-'
+                      : '-';
+                    const remarkText = row.isIncluded
+                      ? selectedGradeInfo?.description.toUpperCase() || row.remark
+                      : 'EXCLUDED';
                     return (
                       <tr
                         key={row.subjectId || idx}
@@ -780,18 +878,26 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
                             </button>
                           </td>
                         )}
-                        <td className="py-2 px-2.5 text-center font-mono font-semibold">
-                          {row.isIncluded ? row.ca1Score.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-2 px-2.5 text-center font-mono font-semibold">
-                          {row.isIncluded ? row.ca2Score.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-2 px-2.5 text-center font-mono font-semibold">
-                          {row.isIncluded ? row.examScore.toFixed(1) : '-'}
-                        </td>
-                        <td className="py-2 px-2.5 text-center font-black bg-indigo-50/50 text-indigo-950 font-mono">
-                          {row.isIncluded ? `${row.cum100.toFixed(1)}%` : '-'}
-                        </td>
+                        {scoreView === 'ALL' ? (
+                          <>
+                            <td className="py-2 px-2.5 text-center font-mono font-semibold">
+                              {row.isIncluded ? row.ca1Score.toFixed(1) : '-'}
+                            </td>
+                            <td className="py-2 px-2.5 text-center font-mono font-semibold">
+                              {row.isIncluded ? row.ca2Score.toFixed(1) : '-'}
+                            </td>
+                            <td className="py-2 px-2.5 text-center font-mono font-semibold">
+                              {row.isIncluded ? row.examScore.toFixed(1) : '-'}
+                            </td>
+                            <td className="py-2 px-2.5 text-center font-black bg-indigo-50/50 text-indigo-950 font-mono">
+                              {row.isIncluded ? `${row.cum100.toFixed(1)}%` : '-'}
+                            </td>
+                          </>
+                        ) : (
+                          <td className="py-2 px-2.5 text-center font-mono font-semibold">
+                            {row.isIncluded ? selectedScore.toFixed(1) : '-'}
+                          </td>
+                        )}
                         <td className="py-2 px-2.5 text-center font-black">
                           <span
                             className={`px-1.5 py-0.5 rounded text-[10px] ${
@@ -811,7 +917,7 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
                             {gradeText}
                           </span>
                         </td>
-                        <td className="py-2 px-3 text-[11px] font-medium">{row.remark}</td>
+                        <td className="py-2 px-3 text-[11px] font-medium">{remarkText}</td>
                       </tr>
                     );
                   })}

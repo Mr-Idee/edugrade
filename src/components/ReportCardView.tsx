@@ -264,7 +264,10 @@ export const ReportCardView: React.FC = () => {
   // Helper to compute all transcript rows & totals for a given student from the central database
   const computeStudentReportData = (targetStudent: Student) => {
     const studentSummary = termSummaries.find(
-      s => s.studentId === targetStudent.id && s.termId === currentTerm.id
+      s =>
+        s.studentId === targetStudent.id &&
+        s.sectionId === selectedSectionId &&
+        s.termId === currentTerm.id
     );
 
     const enrolledSubjectScores = applicableSubjects
@@ -611,7 +614,8 @@ export const ReportCardView: React.FC = () => {
       },
       activeOverallGrade,
       principalRemarksOptions,
-      remarkText
+      remarkText,
+      teacherRemark: studentSummary?.teacherRemark || ''
     };
   };
 
@@ -627,7 +631,8 @@ export const ReportCardView: React.FC = () => {
       overallTotals,
       activeOverallGrade,
       principalRemarksOptions,
-      remarkText
+      remarkText,
+      teacherRemark
     } = computeStudentReportData(student);
 
     const isLastInBatch = index === totalInBatch - 1;
@@ -1385,6 +1390,20 @@ export const ReportCardView: React.FC = () => {
               )}
             </div>
           </div>
+
+          {currentRole !== 'SUPER_ADMIN' && (
+            <div
+              data-testid={index === 0 ? 'report-teacher-remark' : undefined}
+              className="mt-3 border border-slate-900"
+            >
+              <div className="bg-slate-100 px-3 py-1.5 text-xs font-bold uppercase text-slate-800">
+                FORM TUTOR&apos;S COMMENT • {currentTerm.name} TERM
+              </div>
+              <p className="min-h-[40px] whitespace-pre-wrap bg-white p-3 text-xs text-slate-800">
+                {teacherRemark || 'No form tutor comment recorded for this term.'}
+              </p>
+            </div>
+          )}
 
           {/* Signatures & Report Date Row */}
           <div className="mt-5 flex flex-wrap items-center justify-between gap-4 text-xs font-bold text-slate-900 px-2">

@@ -23,6 +23,7 @@ import {
 } from '../src/utils/sqlExportGenerator.ts';
 import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
 import { mergeScopedScoreAuditLogs } from '../src/utils/scoreAudit.ts';
+import { preserveTeacherRemarksForSuperAdmin } from '../src/utils/studentCommentPolicy.ts';
 import { canAssignStaffRole } from '../src/utils/staffRolePolicy.ts';
 import {
   isDocumentInHodScope,
@@ -578,6 +579,15 @@ function filterSnapshotForStaff(
   snapshot: FullDatabaseSnapshot,
   identity: { username: string; record: EncryptedUserCredential }
 ): FullDatabaseSnapshot {
+  if (identity.record.role === 'SUPER_ADMIN') {
+    return {
+      ...snapshot,
+      termSummaries: snapshot.termSummaries.map(summary => ({
+        ...summary,
+        teacherRemark: ''
+      }))
+    };
+  }
   if (isAdmin(identity.record.role)) return snapshot;
   const teacher = snapshot.teachers.find(
     item => (item.username || '').toLowerCase() === identity.username
@@ -685,6 +695,16 @@ function mergeScopedSnapshot(
   submitted: FullDatabaseSnapshot,
   identity: { username: string; record: EncryptedUserCredential }
 ): FullDatabaseSnapshot {
+  if (identity.record.role === 'SUPER_ADMIN') {
+    const normalized = normalizeEnrollmentIds(submitted);
+    return {
+      ...normalized,
+      termSummaries: preserveTeacherRemarksForSuperAdmin(
+        current.termSummaries,
+        normalized.termSummaries
+      )
+    };
+  }
   if (isAdmin(identity.record.role)) return normalizeEnrollmentIds(submitted);
   const teacher = current.teachers.find(
     item => (item.username || '').toLowerCase() === identity.username

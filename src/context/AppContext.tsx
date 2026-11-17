@@ -2959,7 +2959,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             classRank: currentRank,
             totalStudentsInSection: sectionStudents.length,
             principalRemark: 'Satisfactory work. With more focus, higher grades are within reach.',
-            teacherRemark: 'Solid effort throughout the term.',
+            teacherRemark: '',
             isPublished: true,
             updatedAt: new Date().toISOString()
           });
@@ -3332,8 +3332,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Update Remarks
   const updateRemarks = useCallback((studentId: number, principalRemark?: string, teacherRemark?: string) => {
+    const student = students.find(item => item.id === studentId);
+    const sectionId = student?.currentSectionId;
+    if (
+      teacherRemark !== undefined &&
+      sectionId !== undefined &&
+      !termSummaries.some(
+        summary =>
+          summary.studentId === studentId &&
+          summary.sectionId === sectionId &&
+          summary.termId === currentTerm.id
+      )
+    ) {
+      recalculateSectionSummaries(sectionId);
+    }
+
     setTermSummaries(prev => {
-      const idx = prev.findIndex(s => s.studentId === studentId && s.termId === currentTerm.id);
+      const idx = prev.findIndex(
+        summary =>
+          summary.studentId === studentId &&
+          summary.termId === currentTerm.id &&
+          (sectionId === undefined || summary.sectionId === sectionId)
+      );
       if (idx >= 0) {
         const copy = [...prev];
         copy[idx] = {
@@ -3347,7 +3367,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return prev;
     });
     setLastAutoSavedTime(new Date().toLocaleTimeString());
-  }, [currentTerm.id]);
+  }, [currentTerm.id, recalculateSectionSummaries, students, termSummaries]);
 
   // Comment Bank CRUD
   const addCommentBankItem = useCallback((item: Omit<CommentBankItem, 'id'>) => {

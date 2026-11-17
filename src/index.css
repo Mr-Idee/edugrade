@@ -28,6 +28,23 @@
       print-color-adjust: exact !important;
     }
 
+    body.student-comments-print * {
+      visibility: hidden !important;
+    }
+
+    body.student-comments-print [data-student-comments-print],
+    body.student-comments-print [data-student-comments-print] * {
+      visibility: visible !important;
+    }
+
+    body.student-comments-print [data-student-comments-print] {
+      display: block !important;
+      position: absolute !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: 100% !important;
+    }
+
     /* Hide non-printable navigation, toolbar and modals */
     .print\:hidden {
       display: none !important;
