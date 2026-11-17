@@ -801,7 +801,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       {/* HIGH-VISIBILITY SUBJECT & TERM BANNER (Prevents Entry Mistakes!)      */}
       {/* ===================================================================== */}
       <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 text-white rounded-2xl shadow-lg border-2 border-indigo-500/40 p-5 sm:p-6">
-        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,auto)] xl:items-center">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
           {/* Prominent Active Subject & Term Display */}
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -817,7 +817,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
 
             <div className="grid min-w-0 grid-cols-1 gap-2 pt-1 sm:grid-cols-2 sm:gap-3">
               {/* Giant Subject Highlight */}
-              <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border-2 border-amber-400 bg-white px-3 py-2.5 text-slate-950 shadow-md sm:col-span-2 xl:col-span-1">
+              <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border-2 border-amber-400 bg-white px-3 py-2.5 text-slate-950 shadow-md sm:col-span-2">
                 {ledgerMode === 'custom_report'
                   ? <ClipboardList className="w-6 h-6 text-amber-600 shrink-0" />
                   : <BookOpen className="w-6 h-6 text-indigo-600 shrink-0" />}
@@ -834,7 +834,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               </div>
 
               {/* Giant Term Highlight */}
-              <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border-2 border-indigo-300 bg-indigo-600 px-3 py-2.5 text-white shadow-md">
+              <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border-2 border-indigo-300 bg-indigo-600 px-3 py-2.5 text-white shadow-md sm:col-span-1">
                 <Calendar className="w-6 h-6 text-amber-300 shrink-0" />
                 <div className="min-w-0">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-200 leading-none">
@@ -847,7 +847,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               </div>
 
               {/* Class Section Pill */}
-              <div className="min-w-0 max-w-full rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2.5 sm:col-span-2 xl:col-span-1">
+              <div className="min-w-0 max-w-full rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2.5 sm:col-span-2">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 leading-none">
                   CLASS SECTION ({currentSection.levelType})
                 </div>
@@ -859,13 +859,13 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
           </div>
 
           {/* Right Controls: Term Switcher & Mode Switcher */}
-          <div className="flex w-full min-w-0 flex-col gap-3 xl:w-auto xl:items-end xl:justify-between">
+          <div className="flex w-full min-w-0 flex-col gap-3">
             {/* Term Selector Buttons (FIRST, SECOND, THIRD TERM) */}
             <div>
               <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-1 sm:text-right">
                 Switch Academic Term:
               </div>
-              <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-700 bg-slate-800/90 p-1 sm:w-auto">
+              <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-700 bg-slate-800/90 p-1">
                 {terms.map(t => {
                   const isSelected = currentTerm.id === t.id;
                   return (
@@ -887,11 +887,11 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
             </div>
 
             {/* Ledger View Switcher */}
-            <div className="grid w-full grid-cols-1 gap-1 rounded-xl border border-slate-700 bg-slate-800/90 p-1 sm:grid-cols-3 xl:w-auto">
+            <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-700 bg-slate-800/90 p-1">
               <button
                 type="button"
                 onClick={() => setLedgerMode('ca_grid')}
-                className={`flex min-w-0 items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-center text-xs font-bold transition-all cursor-pointer ${
+                className={`flex min-w-0 items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-center text-[clamp(0.5rem,2.5vw,0.875rem)] font-bold leading-tight transition-all cursor-pointer sm:gap-1.5 sm:px-2 ${
                   ledgerMode === 'ca_grid'
                     ? 'bg-indigo-600 text-white shadow-xs'
                     : 'text-slate-300 hover:text-white'
@@ -903,7 +903,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               <button
                 type="button"
                 onClick={() => setLedgerMode('term_registry')}
-                className={`flex min-w-0 items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-center text-xs font-bold transition-all cursor-pointer ${
+                className={`flex min-w-0 items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-center text-[clamp(0.5rem,2.5vw,0.875rem)] font-bold leading-tight transition-all cursor-pointer sm:gap-1.5 sm:px-2 ${
                   ledgerMode === 'term_registry'
                     ? 'bg-emerald-600 text-white shadow-xs'
                     : 'text-slate-300 hover:text-white'
@@ -915,7 +915,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               <button
                 type="button"
                 onClick={() => setLedgerMode('custom_report')}
-                className={`flex min-w-0 items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-center text-xs font-bold transition-all cursor-pointer ${
+                className={`flex min-w-0 items-center justify-center gap-1 rounded-lg px-1 py-1.5 text-center text-[clamp(0.5rem,2.5vw,0.875rem)] font-bold leading-tight transition-all cursor-pointer sm:gap-1.5 sm:px-2 ${
                   ledgerMode === 'custom_report'
                     ? 'bg-amber-500 text-slate-950 shadow-xs'
                     : 'text-slate-300 hover:text-white'
