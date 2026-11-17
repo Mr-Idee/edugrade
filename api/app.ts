@@ -908,7 +908,10 @@ async function saveState(
   }
   const { data, error } = result;
   if (error) {
-    if (error.code === '40001') {
+    if (
+      error.code === '40001' ||
+      error.message.toLowerCase().includes('application state changed since it was loaded')
+    ) {
       const conflict = new Error('School records changed while you were editing. Reload before saving.');
       Object.assign(conflict, { status: 409 });
       throw conflict;

@@ -218,3 +218,19 @@ export function areNonScoreSnapshotValuesEqual(
   } = current;
   return areOfflineValuesEqual(previousOtherValues, currentOtherValues);
 }
+
+export function isStateRevisionConflictResponse(status: number, payload: unknown): boolean {
+  if (status === 409) return true;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+
+  const response = payload as Record<string, unknown>;
+  if (String(response.code || '') === '40001') return true;
+
+  const errorText = [response.error, response.message]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+  return errorText.includes('40001') ||
+    errorText.includes('application state changed since it was loaded') ||
+    errorText.includes('school records changed while you were editing');
+}

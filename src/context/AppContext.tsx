@@ -77,6 +77,7 @@ import {
   generatePhpMyAdminSqlDump,
   FullDatabaseSnapshot
 } from '../utils/sqlExportGenerator';
+import { isStateRevisionConflictResponse } from '../utils/scoreStateStorage';
 import {
   DEFAULT_INSTITUTION_LOGO_DATA_URI,
   resolveInstitutionLogoUrl,
@@ -4557,15 +4558,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       } else {
         const data = await res.json().catch(() => null);
-        const isRevisionConflict = res.status === 409;
-        const message = isRevisionConflict
-          ? 'Database records changed elsewhere. Automatic saving is paused; reload the page to load the latest records before continuing.'
-          : data?.error || `Database sync failed (HTTP ${res.status})`;
+        const isRevisionConflict = isStateRevisionConflictResponse(res.status, data);
         if (isRevisionConflict) {
+          const message = 'Database records changed elsewhere. Automatic saving is paused; reload the page to load the latest records before continuing.';
           backendConflictRef.current = true;
           backendSyncPendingRef.current = false;
+          shouldDrainPendingSync = false;
           setBackendSavePaused(true);
+          setBackendStatus(previous => ({
+            ...previous,
+            nodeConnected: true,
+            isSyncing: false,
+            statusMessage: message
+          }));
+          return {
+            savedToDatabase: false,
+            savedToNodeDisk: false,
+            message
+          };
         }
+        const message = data?.error || `Database sync failed (HTTP ${res.status})`;
         const shouldQueueOffline = shouldQueueOfflineChanges(
           typeof navigator === 'undefined' || navigator.onLine,
           res.status

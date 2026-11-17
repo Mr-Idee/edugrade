@@ -5,6 +5,7 @@ import type { FullDatabaseSnapshot } from './sqlExportGenerator.ts';
 import {
   collectRecordChanges,
   collectScoreStateChanges,
+  isStateRevisionConflictResponse,
   rebaseScoreStateChanges
 } from './scoreStateStorage.ts';
 
@@ -99,6 +100,18 @@ test('score-state delta reports removed rows', () => {
 
   assert.deepEqual(changes.upserts, []);
   assert.deepEqual(changes.deletes, [{ recordType: 'scores', recordKey: '1:2' }]);
+});
+
+test('revision conflicts are detected from HTTP status, SQLSTATE, or error text', () => {
+  assert.equal(isStateRevisionConflictResponse(409, { error: 'Conflict' }), true);
+  assert.equal(isStateRevisionConflictResponse(500, { code: '40001' }), true);
+  assert.equal(
+    isStateRevisionConflictResponse(503, {
+      error: 'Application state changed since it was loaded'
+    }),
+    true
+  );
+  assert.equal(isStateRevisionConflictResponse(500, { error: 'Supabase is unavailable' }), false);
 });
 
 test('score-state rebasing preserves concurrent edits to different score records', () => {
