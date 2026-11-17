@@ -1,9 +1,9 @@
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import type { PushSubscription } from 'web-push';
+import compression from 'compression';
+import webPush, { type PushSubscription } from 'web-push';
 import { ZipArchive } from 'archiver';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -121,9 +121,6 @@ function getVapidConfiguration(): { publicKey: string; privateKey: string; subje
 }
 
 const SESSION_COOKIE = 'edugrade_session';
-const require = createRequire(import.meta.url);
-const webPush = require('web-push') as typeof import('web-push');
-const compression = require('compression') as typeof import('compression');
 
 interface PushSubscriptionRecord {
   endpoint: string;
