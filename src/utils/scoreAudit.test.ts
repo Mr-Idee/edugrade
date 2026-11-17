@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { ScoreAuditLog, Student } from '../types/index.ts';
-import { resolveScoreAuditStudentName } from './scoreAudit.ts';
+import { mergeScopedScoreAuditLogs, resolveScoreAuditStudentName } from './scoreAudit.ts';
 
 const students: Student[] = [
   {
@@ -51,4 +51,28 @@ test('score audit prefers the linked student record and hides unresolved numeric
 
 test('score audit preserves a stored student name when no ID is present', () => {
   assert.equal(resolveScoreAuditStudentName(createLog(), students), 'Ada Student');
+});
+
+test('scoped score-audit merge keeps existing logs and accepts only authorized new entries', () => {
+  const existing = createLog({ id: 1 });
+  const allowed = createLog({
+    id: 2,
+    studentId: 42,
+    subjectId: 7,
+    createdAt: '2026-11-16T00:00:00.000Z'
+  });
+  const unauthorized = createLog({
+    id: 3,
+    studentId: 99,
+    subjectId: 7,
+    createdAt: '2026-11-17T00:00:00.000Z'
+  });
+
+  const merged = mergeScopedScoreAuditLogs(
+    [existing],
+    [allowed, unauthorized],
+    log => log.studentId === 42 && log.subjectId === 7
+  );
+
+  assert.deepEqual(merged.map(log => log.id), [2, 1]);
 });

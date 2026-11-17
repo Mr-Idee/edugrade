@@ -14,10 +14,15 @@ import {
   type PendingOfflineSnapshot
 } from '../src/utils/offlineSyncEngine.ts';
 import {
+  areNonScoreSnapshotValuesEqual,
+  collectScoreStateChanges
+} from '../src/utils/scoreStateStorage.ts';
+import {
   normalizeEnrollmentIds,
   type FullDatabaseSnapshot
 } from '../src/utils/sqlExportGenerator.ts';
 import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
+import { mergeScopedScoreAuditLogs } from '../src/utils/scoreAudit.ts';
 import { canAssignStaffRole } from '../src/utils/staffRolePolicy.ts';
 import {
   isDocumentInHodScope,
@@ -185,6 +190,7 @@ const USER_ROLES = new Set<UserRole>([
 const app = express();
 let supabaseClient: SupabaseClient | null = null;
 let warnedMissingLoadFunction = false;
+let warnedMissingScoreAuditMigration = false;
 const stateSnapshotCache = new RevisionedValueCache<StateRow>(5 * 60 * 1000);
 const documentBytesCache = new DocumentBytesCache({
   maxBytes: 32 * 1024 * 1024,
@@ -724,6 +730,27 @@ function mergeScopedSnapshot(
       submitted.termSummaries,
       summary => sectionIds.has(summary.sectionId) && studentIds.has(summary.studentId)
     ),
+    auditLogs: mergeScopedScoreAuditLogs(
+      current.auditLogs,
+      submitted.auditLogs,
+      log => {
+        const subjectIsAllowed = !subjectIds.size || (
+          log.subjectId !== undefined
+            ? subjectIds.has(log.subjectId)
+            : current.subjects.some(
+                subject => subject.name === log.subjectName && subjectIds.has(subject.id)
+              )
+        );
+        return Boolean(
+          teacher &&
+          log.studentId !== undefined &&
+          studentIds.has(log.studentId) &&
+          subjectIsAllowed &&
+          log.changedBy === teacher.fullName &&
+          USER_ROLES.has(log.changedByRole)
+        );
+      }
+    ),
     customReportTemplates: (current.customReportTemplates || []).map(template => {
       const submittedTemplate = submitted.customReportTemplates?.find(item => item.id === template.id);
       if (!submittedTemplate) return template;
@@ -773,10 +800,55 @@ async function saveState(
   snapshot: FullDatabaseSnapshot,
   expectedRevision: string | null
 ): Promise<{ stateRevision: string; updatedAt: string }> {
-  const { data, error } = await getSupabase().rpc('save_app_state', {
-    p_state: omitSessionArchives(snapshot),
-    p_expected_revision: expectedRevision
-  });
+  const cachedState = expectedRevision
+    ? stateSnapshotCache.get(expectedRevision)
+    : undefined;
+  const currentState = cachedState || await loadCachedState();
+  const existingAuditIds = new Set(
+    (currentState?.state_json.auditLogs || []).map(log => log.id)
+  );
+  const newAuditLogs = (snapshot.auditLogs || []).filter(log => !existingAuditIds.has(log.id));
+  const persistedSnapshot = omitSessionArchives({
+    ...snapshot,
+    auditLogs: []
+  }) as FullDatabaseSnapshot;
+  const scoreOnlyChange = Boolean(
+    currentState && areNonScoreSnapshotValuesEqual(currentState.state_json, snapshot)
+  );
+  const scoreChanges = currentState
+    ? collectScoreStateChanges(currentState.state_json, snapshot)
+    : { upserts: [], deletes: [] };
+  let result = scoreOnlyChange
+    ? await getSupabase().rpc('save_score_state', {
+        p_changes: scoreChanges.upserts,
+        p_deletes: scoreChanges.deletes,
+        p_audit_logs: newAuditLogs,
+        p_expected_revision: expectedRevision
+      })
+    : await getSupabase().rpc('save_app_state', {
+        p_state: persistedSnapshot,
+        p_expected_revision: expectedRevision,
+        p_audit_logs: newAuditLogs
+      });
+
+  if (scoreOnlyChange && result.error && ['PGRST202', '42883'].includes(result.error.code || '')) {
+    result = await getSupabase().rpc('save_app_state', {
+      p_state: persistedSnapshot,
+      p_expected_revision: expectedRevision,
+      p_audit_logs: newAuditLogs
+    });
+  }
+  if (result.error && ['PGRST202', '42883'].includes(result.error.code || '')) {
+    if (!warnedMissingScoreAuditMigration) {
+      console.warn('Incremental score storage migration is pending; using legacy snapshot persistence temporarily.');
+      warnedMissingScoreAuditMigration = true;
+    }
+    result = await getSupabase().rpc('save_app_state', {
+      p_state: omitSessionArchives(snapshot),
+      p_expected_revision: expectedRevision
+    });
+  }
+  const { data, error } = result;
   if (error) {
     if (error.code === '40001') {
       const conflict = new Error('School records changed while you were editing. Reload before saving.');

@@ -7,6 +7,11 @@ creates a private `edugrade-documents` Storage bucket. The canonical snapshot
 is the record loaded and saved by the cloud runtime; it replaces the previous
 MySQL `app_state_store.state_json` record.
 
+The score-state migration moves scores, term records, term summaries, and
+score-audit entries out of the snapshot into independently updated rows.
+Routine score edits then write only changed records and advance the snapshot
+revision, instead of rewriting the full JSON document.
+
 The migration enables row-level security and grants no access to the
 `anon` or `authenticated` roles. The server-side API in `api/app.ts` uses the
 Supabase secret key only in server context and authenticates users before
@@ -34,6 +39,7 @@ records.
 
 The cloud API is implemented in `api/app.ts`; it does not use a MySQL server.
 The MySQL connection is required only while `npm run db:import` reads the
-legacy database. Only the canonical snapshot and associated cloud runtime
-tables are created in Supabase; the older 28-table MySQL relational
-projection is not recreated because the cloud runtime does not query it.
+legacy database. Supabase stores the canonical snapshot, normalized score
+records, score-audit entries, and associated cloud runtime data; the older
+28-table MySQL relational projection is not recreated because the cloud
+runtime does not query it.

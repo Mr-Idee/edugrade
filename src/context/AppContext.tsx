@@ -111,6 +111,7 @@ import {
   fetchOfflineCommitWithRetry,
   loadPendingOfflineDocuments,
   loadPendingOfflineSnapshot,
+  areOfflineValuesEqual,
   mergePendingOfflineSnapshot,
   omitSessionArchives,
   OfflineConflict,
@@ -978,6 +979,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return initialScoreAuditLogs;
   });
+  const scoreAuditIdSeedRef = useRef(Math.floor(Math.random() * 1_000_000));
+  const lastScoreAuditIdRef = useRef(0);
 
   const [sessionArchives, setSessionArchives] = useState<AcademicSessionArchive[]>(() => {
     return [
@@ -3001,13 +3004,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const maxExam = isJunior ? 60 : 70;
 
     const subject = subjects.find(sb => sb.id === subjectId);
-    let prevScoreVal: number | null = null;
+    const previousScore = scores.find(
+      item => item.studentId === studentId &&
+        item.subjectId === subjectId &&
+        item.componentId === componentId
+    )?.score ?? null;
 
     setScores(prev => {
       const existingIdx = prev.findIndex(s => s.studentId === studentId && s.subjectId === subjectId && s.componentId === componentId);
       let nextScores: AssessmentScore[];
       if (existingIdx >= 0) {
-        prevScoreVal = prev[existingIdx].score;
         const copy = [...prev];
         const enrollment =
           enrollments.find(
@@ -3093,14 +3099,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return nextScores;
     });
 
-    if (prevScoreVal !== score) {
+    if (previousScore !== score) {
+      const auditId = Math.max(
+        Date.now() * 1000 + scoreAuditIdSeedRef.current,
+        lastScoreAuditIdRef.current + 1
+      );
+      lastScoreAuditIdRef.current = auditId;
       const newAuditLog: ScoreAuditLog = {
-        id: Date.now(),
+        id: auditId,
         studentId,
+        subjectId,
         studentName: student?.fullName || 'Unknown student',
         subjectName: subject?.name || `Subject #${subjectId}`,
         componentName: comp.name,
-        previousScore: prevScoreVal,
+        previousScore,
         newScore: score,
         changedBy: currentUser.fullName,
         changedByRole: currentRole,
@@ -3119,7 +3131,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return { success: true };
-  }, [assessmentComponents, students, classSections, subjects, currentUser, currentRole, enrollments, currentTerm.id, recalculateSectionSummaries]);
+  }, [assessmentComponents, students, classSections, subjects, currentUser, currentRole, enrollments, scores, currentTerm.id, recalculateSectionSummaries]);
 
   // Update Term Subject Record:
   // Junior: 1st CA (20 = 40/2) + 2nd CA (20 = 40/2) + Exam (60) = 100
@@ -4443,6 +4455,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { savedToDatabase: false, savedToNodeDisk: false, message };
       }
     }
+    if (
+      backendBaseSnapshotRef.current &&
+      areOfflineValuesEqual(snapshot, backendBaseSnapshotRef.current)
+    ) {
+      return {
+        savedToDatabase: true,
+        savedToNodeDisk: false,
+        message: 'No database changes to save.'
+      };
+    }
     setBackendStatus(prev => ({ ...prev, isSyncing: true }));
     let requestStarted = false;
     try {
@@ -4913,7 +4935,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     URL.revokeObjectURL(url);
   }, [buildSnapshot, backendStatus.dbName]);
 
-  // Debounced auto-sync to Node.js + MySQL backend whenever data changes
+  // Debounce nearby edits so a score entry does not immediately rewrite cloud state.
   useEffect(() => {
     if (!backendHydrated) return;
     const timer = setTimeout(() => {

@@ -21,6 +21,8 @@ async function main(): Promise<void> {
 
   const requiredTables = [
     ['app_state_store', 'id'],
+    ['score_state_records', 'record_key'],
+    ['score_audit_logs', 'id'],
     ['auth_vault', 'id'],
     ['offline_commit_archive', 'commit_id'],
     ['system_backups', 'id'],
@@ -36,11 +38,14 @@ async function main(): Promise<void> {
 
   const { data: state, error: stateError } = await supabase
     .from('app_state_store')
-    .select('id,state_revision,updated_at')
+    .select('id,state_revision,updated_at,state_checksum')
     .eq('id', 1)
     .maybeSingle();
   if (stateError) {
     throw new Error(`Could not read the canonical school state: ${stateError.code} ${stateError.message}`);
+  }
+  if (state && !state.state_checksum) {
+    throw new Error('The canonical school state has no checksum; apply the score-storage migration.');
   }
 
   const { data: loadedRows, error: loadFunctionError } = await supabase.rpc('load_app_state');
@@ -62,13 +67,28 @@ async function main(): Promise<void> {
 
   const { error: saveFunctionError } = await supabase.rpc('save_app_state', {
     p_state: [],
-    p_expected_revision: null
+    p_expected_revision: null,
+    p_audit_logs: []
   });
   if (saveFunctionError?.code !== '22023') {
     throw new Error(
       saveFunctionError
         ? `Could not validate the Supabase state-write function: ${saveFunctionError.code} ${saveFunctionError.message}`
         : 'Supabase accepted an invalid state payload; expected the state-write validation to reject it.'
+    );
+  }
+
+  const { error: scoreFunctionError } = await supabase.rpc('save_score_state', {
+    p_changes: [],
+    p_deletes: [],
+    p_audit_logs: [],
+    p_expected_revision: 'deployment-check-invalid-revision'
+  });
+  if (scoreFunctionError?.code !== '40001') {
+    throw new Error(
+      scoreFunctionError
+        ? `Could not validate incremental score saves: ${scoreFunctionError.code} ${scoreFunctionError.message}`
+        : 'Supabase accepted an incremental score save with an invalid revision.'
     );
   }
 
@@ -120,6 +140,7 @@ async function main(): Promise<void> {
     stateInitialized: Boolean(state),
     stateRevision: state?.state_revision || null,
     loadStateFunctionAvailable,
+    normalizedScoreStorage: true,
     documentBucket: 'edugrade-documents'
   }));
 }

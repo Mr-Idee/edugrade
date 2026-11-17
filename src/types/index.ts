@@ -281,6 +281,7 @@ export interface StudentAnnualSummary {
 export interface ScoreAuditLog {
   id: number;
   studentId?: number;
+  subjectId?: number;
   assessmentScoreId?: number;
   studentName: string;
   subjectName: string;

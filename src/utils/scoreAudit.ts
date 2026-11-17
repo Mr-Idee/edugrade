@@ -19,3 +19,19 @@ export function resolveScoreAuditStudentName(log: ScoreAuditLog, students: Stude
     ? log.studentName
     : 'Unknown student';
 }
+
+export function mergeScopedScoreAuditLogs(
+  existing: ScoreAuditLog[],
+  submitted: ScoreAuditLog[],
+  canEdit: (log: ScoreAuditLog) => boolean
+): ScoreAuditLog[] {
+  const merged = new Map(existing.map(log => [log.id, log]));
+  for (const log of submitted) {
+    if (canEdit(log)) merged.set(log.id, log);
+  }
+  return Array.from(merged.values()).sort(
+    (left, right) =>
+      Date.parse(right.createdAt) - Date.parse(left.createdAt) ||
+      right.id - left.id
+  );
+}

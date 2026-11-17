@@ -117,14 +117,21 @@ async function main(): Promise<void> {
       uploadedDocuments += 1;
     }
 
-    const revision = crypto.randomUUID();
-    const { error: stateError } = await supabase.from('app_state_store').upsert({
-      id: 1,
-      state_json: cloudSnapshot,
-      state_revision: revision,
-      updated_at: new Date().toISOString()
+    const { data: currentState, error: currentStateError } = await supabase
+      .from('app_state_store')
+      .select('state_revision')
+      .eq('id', 1)
+      .maybeSingle();
+    if (currentStateError) {
+      throw new Error(`Could not check the current school state: ${currentStateError.message}`);
+    }
+    const { data: savedState, error: stateError } = await supabase.rpc('save_app_state', {
+      p_state: cloudSnapshot,
+      p_expected_revision: currentState?.state_revision || null,
+      p_audit_logs: cloudSnapshot.auditLogs || []
     });
     if (stateError) throw new Error(`Could not import school records: ${stateError.message}`);
+    const savedStateRow = Array.isArray(savedState) ? savedState[0] : savedState;
 
     const root = process.cwd();
     const legacyKey = Buffer.from(
@@ -250,7 +257,7 @@ async function main(): Promise<void> {
       staff: cloudSnapshot.teachers.length,
       documents: uploadedDocuments,
       offlineCommits: offlineCommits.length,
-      stateRevision: revision,
+      stateRevision: savedStateRow?.state_revision || currentState?.state_revision || null,
       authVaultImported: true,
       staffCredentialsAdded,
       staffCredentialsSkipped
