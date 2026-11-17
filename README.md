@@ -5,8 +5,8 @@ built with React, TypeScript, Vercel serverless functions, and Supabase.
 
 ## Vercel and Supabase setup
 
-1. Apply [`supabase/migrations/20261112000000_app_state.sql`](./supabase/migrations/20261112000000_app_state.sql)
-   in the Supabase SQL Editor.
+1. Apply the SQL migrations in `supabase/migrations/` in filename order in the
+   Supabase SQL Editor.
 2. Configure `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`,
    `SUPABASE_SECRET_KEY`, `AUTH_VAULT_ENCRYPTION_KEY`, and `SESSION_SECRET` in
    the local `.env` and Vercel project settings. Keep server secrets out of
@@ -22,6 +22,25 @@ built with React, TypeScript, Vercel serverless functions, and Supabase.
    to a shared server handler; the SPA fallback excludes `/api/*` requests.
    Vercel installs development dependencies for the build so the TypeScript
    compiler and its configured type definitions are available.
+
+### Web Push notifications
+
+Apply [`supabase/migrations/20261113120000_push_subscriptions.sql`](./supabase/migrations/20261113120000_push_subscriptions.sql)
+before enabling message notifications. Configure the following server-only
+variables in the local `.env` and Vercel project settings:
+
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+- `VAPID_SUBJECT` (a `mailto:` or HTTPS contact URI)
+
+Generate one VAPID key pair and keep it stable across deployments:
+
+```powershell
+node -e "console.log(JSON.stringify(require('web-push').generateVAPIDKeys()))"
+```
+
+Never commit or expose `VAPID_PRIVATE_KEY`. Staff enable device notifications
+from the FAB after signing in; notification clicks always require authentication.
 
 Generate separate encryption and session values with:
 

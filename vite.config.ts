@@ -48,6 +48,7 @@ export default defineConfig(({ command, mode }) => {
           'pwa-192x192.png',
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
+          'push-worker.js',
         ],
         manifest: {
           id: '/',
@@ -82,6 +83,7 @@ export default defineConfig(({ command, mode }) => {
           ],
         },
         workbox: {
+          importScripts: ['/push-worker.js'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [

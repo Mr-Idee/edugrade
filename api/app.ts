@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import type { PushSubscription } from 'web-push';
 import { ZipArchive } from 'archiver';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -69,9 +70,106 @@ interface StateMetadata {
   updated_at: string;
 }
 
+interface OfficePushMessage {
+  id: string;
+  senderName: string;
+  senderRole: UserRole;
+  recipientTeacherId: number | 'ALL';
+  subject?: string;
+  body: string;
+  priority?: 'NORMAL' | 'IMPORTANT' | 'URGENT';
+}
+
+function isPushSubscription(value: unknown): value is PushSubscription {
+  if (!value || typeof value !== 'object') return false;
+  const subscription = value as Partial<PushSubscription>;
+  return Boolean(
+    typeof subscription.endpoint === 'string' &&
+    subscription.endpoint.startsWith('https://') &&
+    subscription.keys &&
+    typeof subscription.keys.p256dh === 'string' &&
+    typeof subscription.keys.auth === 'string'
+  );
+}
+
+function isOfficePushMessage(value: unknown): value is OfficePushMessage {
+  if (!value || typeof value !== 'object') return false;
+  const message = value as Partial<OfficePushMessage>;
+  return Boolean(
+    typeof message.id === 'string' &&
+    message.id.length <= 120 &&
+    typeof message.senderName === 'string' &&
+    typeof message.senderRole === 'string' &&
+    typeof message.body === 'string' &&
+    message.body.length <= 5000 &&
+    (message.subject === undefined || (typeof message.subject === 'string' && message.subject.length <= 160)) &&
+    (message.recipientTeacherId === 'ALL' ||
+      (Number.isSafeInteger(message.recipientTeacherId) && Number(message.recipientTeacherId) > 0))
+  );
+}
+
+function getVapidConfiguration(): { publicKey: string; privateKey: string; subject: string } | null {
+  const publicKey = process.env.VAPID_PUBLIC_KEY?.trim();
+  const privateKey = process.env.VAPID_PRIVATE_KEY?.trim();
+  const subject = process.env.VAPID_SUBJECT?.trim();
+  return publicKey && privateKey && subject ? { publicKey, privateKey, subject } : null;
+}
+
 const SESSION_COOKIE = 'edugrade_session';
 const require = createRequire(import.meta.url);
+const webPush = require('web-push') as typeof import('web-push');
 const compression = require('compression') as typeof import('compression');
+
+interface PushSubscriptionRecord {
+  endpoint: string;
+  teacher_id: number;
+  subscription: unknown;
+  last_pending_message_id: string | null;
+}
+
+async function deliverPushToSubscriptions(
+  subscriptions: PushSubscriptionRecord[],
+  messageId: string,
+  payload: string
+): Promise<{ delivered: number; failed: number }> {
+  let delivered = 0;
+  let failed = 0;
+  await Promise.all(subscriptions.map(async row => {
+    if (!isPushSubscription(row.subscription)) {
+      failed += 1;
+      return;
+    }
+    try {
+      await webPush.sendNotification(row.subscription, payload);
+      const { error } = await getSupabase()
+        .from('push_subscriptions')
+        .update({
+          last_pending_message_id: messageId,
+          updated_at: new Date().toISOString()
+        })
+        .eq('endpoint', row.endpoint);
+      if (error) throw wrapSupabaseError('Could not update notification delivery status', error);
+      delivered += 1;
+    } catch (error) {
+      const statusCode = error && typeof error === 'object' && 'statusCode' in error
+        ? Number(error.statusCode)
+        : 0;
+      if (statusCode === 404 || statusCode === 410) {
+        const deletion = await getSupabase()
+          .from('push_subscriptions')
+          .delete()
+          .eq('endpoint', row.endpoint);
+        if (deletion.error) {
+          throw wrapSupabaseError('Could not remove an expired notification device', deletion.error);
+        }
+        return;
+      }
+      failed += 1;
+      console.error('Web Push delivery failed for a subscribed device.', error);
+    }
+  }));
+  return { delivered, failed };
+}
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 const ADMIN_ROLES = new Set<UserRole>([
   'SUPER_ADMIN',
@@ -1229,6 +1327,187 @@ app.post('/api/auth/update-staff-credentials', async (request: AuthenticatedRequ
       fullName,
       passwordUpdated: Boolean(request.body?.newPassword)
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/push/public-key', (_request, response) => {
+  const configuration = getVapidConfiguration();
+  if (!configuration) {
+    response.status(503).json({
+      ok: false,
+      error: 'Push notifications are not configured on the server.'
+    });
+    return;
+  }
+  response.json({ publicKey: configuration.publicKey });
+});
+
+app.post('/api/push/subscribe', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response))) return;
+    if (!getVapidConfiguration()) {
+      response.status(503).json({
+        ok: false,
+        error: 'Push notifications are not configured on the server.'
+      });
+      return;
+    }
+    if (!isPushSubscription(request.body)) {
+      response.status(400).json({ ok: false, error: 'A valid browser push subscription is required.' });
+      return;
+    }
+    const state = await loadCachedState();
+    const teacher = state?.state_json.teachers.find(
+      item => (item.username || '').toLowerCase() === request.auth!.username
+    );
+    if (!teacher) {
+      response.status(403).json({ ok: false, error: 'No active staff profile is linked to this account.' });
+      return;
+    }
+    const { error } = await getSupabase().from('push_subscriptions').upsert({
+      endpoint: request.body.endpoint,
+      username: request.auth!.username,
+      teacher_id: teacher.id,
+      subscription: request.body,
+      updated_at: new Date().toISOString()
+    });
+    if (error) throw wrapSupabaseError('Could not save this device for notifications', error);
+    response.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/push/notify-pending', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response))) return;
+    const configuration = getVapidConfiguration();
+    if (!configuration) {
+      response.status(503).json({
+        ok: false,
+        error: 'Push notifications are not configured on the server.'
+      });
+      return;
+    }
+    const state = await loadCachedState();
+    if (!state) {
+      response.status(503).json({ ok: false, error: 'School staff data is not available.' });
+      return;
+    }
+    const teacher = state.state_json.teachers.find(
+      item => (item.username || '').toLowerCase() === request.auth!.username
+    );
+    if (!teacher) {
+      response.status(403).json({ ok: false, error: 'No active staff profile is linked to this account.' });
+      return;
+    }
+    const pendingMessages = (state.state_json.officeMessages || [])
+      .filter(message =>
+        (message.recipientTeacherId === 'ALL' ||
+          Number(message.recipientTeacherId) === teacher.id) &&
+        !message.readByTeacherIds.includes(teacher.id)
+      )
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+    const latestMessage = pendingMessages[0];
+    if (!latestMessage) {
+      response.json({ ok: true, delivered: 0, failed: 0 });
+      return;
+    }
+
+    const { data, error } = await getSupabase()
+      .from('push_subscriptions')
+      .select('endpoint,teacher_id,subscription,last_pending_message_id')
+      .eq('teacher_id', teacher.id);
+    if (error) throw wrapSupabaseError('Could not load pending-message notification devices', error);
+    const subscriptions = ((data || []) as PushSubscriptionRecord[])
+      .filter(row => row.last_pending_message_id !== latestMessage.id);
+    if (!subscriptions.length) {
+      response.json({ ok: true, delivered: 0, failed: 0 });
+      return;
+    }
+
+    webPush.setVapidDetails(configuration.subject, configuration.publicKey, configuration.privateKey);
+    const result = await deliverPushToSubscriptions(
+      subscriptions,
+      latestMessage.id,
+      JSON.stringify({
+        title: 'Pending office messages',
+        body: `You have ${pendingMessages.length} unread office message${pendingMessages.length === 1 ? '' : 's'}. Sign in to view.`,
+        tag: `office-messages-${teacher.id}`,
+        url: `/?messageId=${encodeURIComponent(latestMessage.id)}`
+      })
+    );
+    response.json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/push/send', async (request: AuthenticatedRequest, response, next) => {
+  try {
+    if (!(await requireUser(request, response, ADMIN_ROLES))) return;
+    const configuration = getVapidConfiguration();
+    if (!configuration) {
+      response.status(503).json({
+        ok: false,
+        error: 'Push notifications are not configured on the server.'
+      });
+      return;
+    }
+    const message = request.body?.message;
+    if (!isOfficePushMessage(message) || !USER_ROLES.has(message.senderRole)) {
+      response.status(400).json({ ok: false, error: 'A valid office message is required.' });
+      return;
+    }
+    if (
+      message.senderName !== request.auth!.record.fullName ||
+      message.senderRole !== request.auth!.record.role
+    ) {
+      response.status(403).json({ ok: false, error: 'The message sender does not match the signed-in user.' });
+      return;
+    }
+    const state = await loadCachedState();
+    if (!state) {
+      response.status(503).json({ ok: false, error: 'School staff data is not available.' });
+      return;
+    }
+    const sender = state.state_json.teachers.find(
+      teacher => (teacher.username || '').toLowerCase() === request.auth!.username
+    );
+    if (!sender) {
+      response.status(403).json({ ok: false, error: 'No active staff profile is linked to this account.' });
+      return;
+    }
+    const recipients = message.recipientTeacherId === 'ALL'
+      ? state.state_json.teachers.filter(teacher => teacher.id !== sender.id)
+      : state.state_json.teachers.filter(teacher => teacher.id === message.recipientTeacherId);
+    if (message.recipientTeacherId !== 'ALL' && recipients.length === 0) {
+      response.status(400).json({ ok: false, error: 'The selected message recipient does not exist.' });
+      return;
+    }
+    const recipientIds = recipients.map(teacher => teacher.id);
+    if (!recipientIds.length) {
+      response.json({ ok: true, delivered: 0, failed: 0 });
+      return;
+    }
+
+    webPush.setVapidDetails(configuration.subject, configuration.publicKey, configuration.privateKey);
+    const { data, error } = await getSupabase()
+      .from('push_subscriptions')
+      .select('endpoint,teacher_id,subscription,last_pending_message_id')
+      .in('teacher_id', recipientIds);
+    if (error) throw wrapSupabaseError('Could not load recipient notification devices', error);
+    const subscriptions = (data || []) as PushSubscriptionRecord[];
+    const payload = JSON.stringify({
+      title: 'New office message',
+      body: `A new ${(message.priority || 'normal').toLowerCase()} office message was sent. Sign in to view.`,
+      tag: `office-message-${message.id}`,
+      url: `/?messageId=${encodeURIComponent(message.id)}`
+    });
+    const result = await deliverPushToSubscriptions(subscriptions, message.id, payload);
+    response.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

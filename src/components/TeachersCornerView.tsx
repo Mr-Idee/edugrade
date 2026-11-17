@@ -55,12 +55,47 @@ import {
   Square,
   UserCheck
 } from 'lucide-react';
+import { createWhatsAppMessageUrl } from '../utils/whatsapp';
 
 interface TeachersCornerViewProps {
   onOpenReportCard?: (studentId: number) => void;
+  initialMessageId?: string;
 }
 
 const WEEKS_1_TO_14 = Array.from({ length: 14 }, (_, i) => i + 1);
+const OFFICE_MESSAGES_PER_PAGE = 5;
+
+const MessagePagination: React.FC<{
+  page: number;
+  itemCount: number;
+  onChange: (page: number) => void;
+}> = ({ page, itemCount, onChange }) => {
+  const pageCount = Math.ceil(itemCount / OFFICE_MESSAGES_PER_PAGE);
+  if (pageCount <= 1) return null;
+  return (
+    <nav aria-label="Message pages" className="flex items-center justify-between border-t border-slate-200 pt-3">
+      <button
+        type="button"
+        onClick={() => onChange(page - 1)}
+        disabled={page <= 1}
+        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 disabled:opacity-40"
+      >
+        Previous
+      </button>
+      <span className="text-xs font-semibold text-slate-500">
+        Page {page} of {pageCount}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(page + 1)}
+        disabled={page >= pageCount}
+        className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-700 disabled:opacity-40"
+      >
+        Next
+      </button>
+    </nav>
+  );
+};
 
 const CATEGORY_LABELS: Record<TeacherDocumentCategory, string> = {
   SCHEME_OF_WORK: 'Scheme of Work',
@@ -70,7 +105,8 @@ const CATEGORY_LABELS: Record<TeacherDocumentCategory, string> = {
 };
 
 export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
-  onOpenReportCard
+  onOpenReportCard,
+  initialMessageId
 }) => {
   const {
     currentRole,
@@ -99,6 +135,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     academicDepartments,
     saveAcademicDepartment,
     deleteAcademicDepartment,
+    updateTeacher,
     updateTeacherCredentials,
     requestPasswordResetForUsername
   } = useApp();
@@ -118,6 +155,8 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
 
   // Messages Drawer / Modal
   const [isMessageModalOpen, setIsMessageModalOpen] = useState(false);
+  const [officeMessagePage, setOfficeMessagePage] = useState(1);
+  const [profileMessagePage, setProfileMessagePage] = useState(1);
 
   // Resolve the signed-in staff member for HOD materials and messages.
   const activeTeacher = useMemo(() => {
@@ -207,6 +246,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
   const [msgSentNotice, setMsgSentNotice] = useState<string | null>(null);
   const [profileFullName, setProfileFullName] = useState(currentUser.fullName);
   const [profileUsername, setProfileUsername] = useState(currentUser.username || '');
+  const [profilePhone, setProfilePhone] = useState('');
   const [profileNewPassword, setProfileNewPassword] = useState('');
   const [profileCurrentCredential, setProfileCurrentCredential] = useState('');
   const [profileMessage, setProfileMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -246,6 +286,18 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       ),
     [officeMessages, currentUser.id]
   );
+  const safeProfileMessagePage = Math.min(
+    profileMessagePage,
+    Math.max(1, Math.ceil(profileMessages.length / OFFICE_MESSAGES_PER_PAGE))
+  );
+  const visibleProfileMessages = profileMessages.slice(
+    (safeProfileMessagePage - 1) * OFFICE_MESSAGES_PER_PAGE,
+    safeProfileMessagePage * OFFICE_MESSAGES_PER_PAGE
+  );
+
+  useEffect(() => {
+    setProfilePhone(profileTeacher?.phone || '');
+  }, [profileTeacher?.id, profileTeacher?.phone]);
 
   const handleProfileSave = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -262,6 +314,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       });
       setProfileMessage({ ok: result.ok, text: result.message });
       if (result.ok) {
+        if (profileTeacher) updateTeacher(profileTeacher.id, { phone: profilePhone.trim() });
         setProfileNewPassword('');
         setProfileCurrentCredential('');
       }
@@ -373,6 +426,29 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     const teacherId = currentUser.id;
     return relevantMessages.filter(m => !m.readByTeacherIds.includes(teacherId)).length;
   }, [relevantMessages, currentUser.id]);
+  const safeOfficeMessagePage = Math.min(
+    officeMessagePage,
+    Math.max(1, Math.ceil(relevantMessages.length / OFFICE_MESSAGES_PER_PAGE))
+  );
+  const visibleOfficeMessages = relevantMessages.slice(
+    (safeOfficeMessagePage - 1) * OFFICE_MESSAGES_PER_PAGE,
+    safeOfficeMessagePage * OFFICE_MESSAGES_PER_PAGE
+  );
+  const selectedMessageRecipient = msgRecipientId === 'ALL'
+    ? undefined
+    : teachers.find(teacher => teacher.id === Number(msgRecipientId));
+  const whatsAppMessageUrl = createWhatsAppMessageUrl(
+    selectedMessageRecipient?.phone,
+    `${msgSubject.trim()}\n\n${msgBody.trim()}`.trim()
+  );
+
+  useEffect(() => {
+    if (!initialMessageId) return;
+    const messageIndex = relevantMessages.findIndex(message => message.id === initialMessageId);
+    if (messageIndex < 0) return;
+    setOfficeMessagePage(Math.floor(messageIndex / OFFICE_MESSAGES_PER_PAGE) + 1);
+    setIsMessageModalOpen(true);
+  }, [initialMessageId, relevantMessages]);
 
   // Handle file input selection (.pdf, .docx, .pptx)
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -502,7 +578,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     }
   };
 
-  const handleSendMessageSubmit = (e: React.FormEvent) => {
+  const handleSendMessageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!msgSubject.trim() || !msgBody.trim()) return;
 
@@ -511,7 +587,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
         ? null
         : teachers.find(t => t.id === Number(msgRecipientId));
 
-    sendOfficeMessage({
+    const newMessage = sendOfficeMessage({
       senderName: currentUser.fullName,
       senderRole: currentRole,
       recipientTeacherId: msgRecipientId === 'ALL' ? 'ALL' : Number(msgRecipientId),
@@ -521,9 +597,28 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       priority: msgPriority
     });
 
-    setMsgSentNotice(
-      `Message "${msgSubject.trim()}" sent to ${targetTeacher ? targetTeacher.fullName : 'All Teaching Staff'}.`
-    );
+    const recipientLabel = targetTeacher ? targetTeacher.fullName : 'All Teaching Staff';
+    try {
+      const response = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: newMessage })
+      });
+      const result = await response.json() as { ok?: boolean; delivered?: number; failed?: number; error?: string };
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Push notification delivery failed.');
+      }
+      setMsgSentNotice(
+        result.delivered
+          ? `Message sent to ${recipientLabel}; push notifications delivered to ${result.delivered} device(s)${result.failed ? `, with ${result.failed} delivery failure(s)` : ''}.`
+          : result.failed
+            ? `Message sent to ${recipientLabel}, but ${result.failed} push notification(s) failed.`
+            : `Message sent to ${recipientLabel}; no recipient device has notifications enabled yet.`
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Push notification delivery failed.';
+      setMsgSentNotice(`Message saved for ${recipientLabel}, but push notification failed: ${detail}`);
+    }
     setMsgSubject('');
     setMsgBody('');
     setTimeout(() => setMsgSentNotice(null), 4000);
@@ -911,6 +1006,16 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                     />
                   </label>
                   <label className="text-[10px] font-bold uppercase text-slate-500">
+                    WhatsApp phone (optional)
+                    <input
+                      type="tel"
+                      value={profilePhone}
+                      onChange={event => setProfilePhone(event.target.value)}
+                      autoComplete="tel"
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold normal-case text-slate-900"
+                    />
+                  </label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">
                     New password (optional)
                     <input
                       type="password"
@@ -985,7 +1090,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                 <p className="rounded-lg border border-dashed border-slate-300 p-4 text-xs text-slate-500">
                   No management messages yet.
                 </p>
-              ) : profileMessages.map(message => {
+              ) : visibleProfileMessages.map(message => {
                 const isRead = message.readByTeacherIds.includes(currentUser.id);
                 return (
                   <article key={message.id} className={`rounded-xl border p-3 ${
@@ -1011,6 +1116,13 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   </article>
                 );
               })}
+            </div>
+            <div className="mt-3">
+              <MessagePagination
+                page={safeProfileMessagePage}
+                itemCount={profileMessages.length}
+                onChange={setProfileMessagePage}
+              />
             </div>
           </div>
         </section>
@@ -2947,6 +3059,17 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   >
                     Send Message
                   </button>
+                  <button
+                    type="button"
+                    disabled={!whatsAppMessageUrl}
+                    title={whatsAppMessageUrl ? 'Open WhatsApp with this message for the selected user' : 'Select one user with a WhatsApp phone number'}
+                    onClick={() => {
+                      if (whatsAppMessageUrl) window.open(whatsAppMessageUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="ml-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-black text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Send via WhatsApp
+                  </button>
                 </form>
               )}
               {relevantMessages.length === 0 ? (
@@ -2954,7 +3077,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   No messages or directives at this time.
                 </div>
               ) : (
-                relevantMessages.map(msg => {
+                visibleOfficeMessages.map(msg => {
                   const teacherId = currentUser.id;
                   const isRead = msg.readByTeacherIds.includes(teacherId);
                   return (
@@ -3012,6 +3135,13 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                     </div>
                   );
                 })
+              )}
+              {relevantMessages.length > 0 && (
+                <MessagePagination
+                  page={safeOfficeMessagePage}
+                  itemCount={relevantMessages.length}
+                  onChange={setOfficeMessagePage}
+                />
               )}
             </div>
           </div>

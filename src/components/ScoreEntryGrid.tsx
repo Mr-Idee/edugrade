@@ -801,7 +801,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       {/* HIGH-VISIBILITY SUBJECT & TERM BANNER (Prevents Entry Mistakes!)      */}
       {/* ===================================================================== */}
       <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-950 text-white rounded-2xl shadow-lg border-2 border-indigo-500/40 p-5 sm:p-6">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,auto)] xl:items-center">
           {/* Prominent Active Subject & Term Display */}
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -815,9 +815,9 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 sm:gap-4 pt-1">
+            <div className="grid min-w-0 grid-cols-1 gap-2 pt-1 sm:grid-cols-2 sm:gap-3">
               {/* Giant Subject Highlight */}
-              <div className="flex min-w-0 max-w-full items-center space-x-2.5 bg-white text-slate-950 px-4 py-2.5 rounded-xl shadow-md border-2 border-amber-400">
+              <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border-2 border-amber-400 bg-white px-3 py-2.5 text-slate-950 shadow-md sm:col-span-2 xl:col-span-1">
                 {ledgerMode === 'custom_report'
                   ? <ClipboardList className="w-6 h-6 text-amber-600 shrink-0" />
                   : <BookOpen className="w-6 h-6 text-indigo-600 shrink-0" />}
@@ -825,7 +825,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 leading-none">
                     {ledgerMode === 'custom_report' ? 'ACTIVE CUSTOM REPORT' : 'ACTIVE SUBJECT'}
                   </div>
-                  <div className="break-words text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-indigo-950 leading-tight">
+                  <div className="break-words text-[clamp(1rem,4vw,1.875rem)] font-black tracking-tight text-indigo-950 leading-tight [overflow-wrap:anywhere]">
                     {ledgerMode === 'custom_report'
                       ? activeCustomSubject?.name || activeCustomTemplate?.title || 'Select a custom report'
                       : currentSubject.name}
@@ -834,24 +834,24 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               </div>
 
               {/* Giant Term Highlight */}
-              <div className="flex min-w-0 max-w-full items-center space-x-2.5 bg-indigo-600 text-white px-4 py-2.5 rounded-xl shadow-md border-2 border-indigo-300">
+              <div className="flex min-w-0 max-w-full items-center gap-2.5 rounded-xl border-2 border-indigo-300 bg-indigo-600 px-3 py-2.5 text-white shadow-md">
                 <Calendar className="w-6 h-6 text-amber-300 shrink-0" />
                 <div className="min-w-0">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-200 leading-none">
                     ACTIVE TERM
                   </div>
-                  <div className="break-words text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-white leading-tight">
+                  <div className="break-words text-[clamp(1rem,4vw,1.875rem)] font-black tracking-tight text-white leading-tight [overflow-wrap:anywhere]">
                     {currentTerm.name} TERM
                   </div>
                 </div>
               </div>
 
               {/* Class Section Pill */}
-              <div className="min-w-0 max-w-full bg-slate-800/90 border border-slate-700 px-4 py-2.5 rounded-xl">
+              <div className="min-w-0 max-w-full rounded-xl border border-slate-700 bg-slate-800/90 px-3 py-2.5 sm:col-span-2 xl:col-span-1">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 leading-none">
                   CLASS SECTION ({currentSection.levelType})
                 </div>
-                <div className="break-words text-base sm:text-xl font-black text-amber-300 leading-tight mt-0.5">
+                <div className="mt-0.5 break-words text-[clamp(0.875rem,3vw,1.25rem)] font-black leading-tight text-amber-300 [overflow-wrap:anywhere]">
                   {currentSection.name}
                 </div>
               </div>
@@ -859,13 +859,13 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
           </div>
 
           {/* Right Controls: Term Switcher & Mode Switcher */}
-          <div className="flex w-full min-w-0 flex-col gap-3 lg:w-auto lg:items-end lg:justify-between">
+          <div className="flex w-full min-w-0 flex-col gap-3 xl:w-auto xl:items-end xl:justify-between">
             {/* Term Selector Buttons (FIRST, SECOND, THIRD TERM) */}
             <div>
               <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-1 sm:text-right">
                 Switch Academic Term:
               </div>
-              <div className="flex w-full flex-wrap bg-slate-800/90 p-1 rounded-xl border border-slate-700 sm:w-auto">
+              <div className="grid w-full grid-cols-3 gap-1 rounded-xl border border-slate-700 bg-slate-800/90 p-1 sm:w-auto">
                 {terms.map(t => {
                   const isSelected = currentTerm.id === t.id;
                   return (
@@ -873,7 +873,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                       key={t.id}
                       type="button"
                       onClick={() => setCurrentTerm(t)}
-                      className={`flex-1 px-3.5 py-2 rounded-lg text-center text-xs sm:flex-none sm:text-sm font-black transition-all cursor-pointer ${
+                      className={`min-w-0 break-words rounded-lg px-1.5 py-2 text-center text-[clamp(0.625rem,2.4vw,0.875rem)] font-black transition-all cursor-pointer sm:px-3 ${
                         isSelected
                           ? 'bg-amber-400 text-slate-950 shadow-md scale-[1.02]'
                           : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
@@ -887,7 +887,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
             </div>
 
             {/* Ledger View Switcher */}
-            <div className="grid w-full grid-cols-1 gap-1 bg-slate-800/90 p-1 rounded-xl border border-slate-700 sm:grid-cols-3 lg:w-auto">
+            <div className="grid w-full grid-cols-1 gap-1 rounded-xl border border-slate-700 bg-slate-800/90 p-1 sm:grid-cols-3 xl:w-auto">
               <button
                 type="button"
                 onClick={() => setLedgerMode('ca_grid')}
@@ -898,7 +898,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                 }`}
               >
                 <Table className="w-3.5 h-3.5" />
-                <span>CA1 Assessment Grid</span>
+                <span className="break-words">CA1 Assessment Grid</span>
               </button>
               <button
                 type="button"
@@ -910,7 +910,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>Full Term Registry (CA1+CA2+Exam)</span>
+                <span className="break-words">Full Term Registry (CA1+CA2+Exam)</span>
               </button>
               <button
                 type="button"
@@ -922,7 +922,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                 }`}
               >
                 <ClipboardList className="w-3.5 h-3.5" />
-                <span>Custom Report Scores</span>
+                <span className="break-words">Custom Report Scores</span>
               </button>
             </div>
             {ledgerMode === 'custom_report' && (

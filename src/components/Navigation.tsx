@@ -44,11 +44,22 @@ import {
   EyeOff,
   UserCheck,
   Briefcase,
+  BellRing,
 } from 'lucide-react';
 
 interface NavigationProps {
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
+}
+
+function decodeApplicationServerKey(key: string): Uint8Array<ArrayBuffer> {
+  const padded = key.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(key.length / 4) * 4, '=');
+  const decoded = atob(padded);
+  const bytes = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index);
+  }
+  return bytes;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab }) => {
@@ -60,6 +71,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
     currentUser,
     currentSession,
     currentTerm,
+    officeMessages,
     classSections,
     selectedSectionId,
     setSelectedSectionId,
@@ -83,7 +95,68 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
   // Floating Action Button (FAB) fluid menu state
   const [isFabMenuOpen, setIsFabMenuOpen] = useState(false);
   const [isBottomNavigationVisible, setIsBottomNavigationVisible] = useState(true);
+  const [pushSetupMessage, setPushSetupMessage] = useState<string | null>(null);
+  const [isSettingUpPush, setIsSettingUpPush] = useState(false);
   const isDesktopPwa = isRunningStandalone && !isMobile;
+  const unreadMessageCount = isStaffLoggedIn
+    ? officeMessages.filter(message =>
+        (message.recipientTeacherId === 'ALL' ||
+          Number(message.recipientTeacherId) === Number(currentUser.id)) &&
+        !message.readByTeacherIds.includes(currentUser.id)
+      ).length
+    : 0;
+
+  const enablePushNotifications = async () => {
+    setPushSetupMessage(null);
+    setIsSettingUpPush(true);
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        throw new Error('Push notifications are not supported by this browser.');
+      }
+      const permission = Notification.permission === 'granted'
+        ? 'granted'
+        : await Notification.requestPermission();
+      if (permission !== 'granted') {
+        throw new Error('Allow notifications in your browser settings to receive messages.');
+      }
+      const keyResponse = await fetch('/api/push/public-key');
+      const keyResult = await keyResponse.json() as { publicKey?: string; error?: string };
+      if (!keyResponse.ok || !keyResult.publicKey) {
+        throw new Error(keyResult.error || 'Push notifications are not configured on the server.');
+      }
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription() ||
+        await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: decodeApplicationServerKey(keyResult.publicKey)
+        });
+      const response = await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(subscription.toJSON())
+      });
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Could not save this device for notifications.');
+      }
+      setPushSetupMessage('Message notifications are enabled on this device.');
+    } catch (error) {
+      setPushSetupMessage(error instanceof Error ? error.message : 'Could not enable notifications.');
+    } finally {
+      setIsSettingUpPush(false);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      isStaffLoggedIn &&
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      Notification.permission === 'granted'
+    ) {
+      void enablePushNotifications();
+    }
+  }, [isStaffLoggedIn]);
 
   // Staff Login / First-Time Password Setup / Forgot Password Modal State
   const [authStep, setAuthStep] = useState<'LOGIN' | 'FIRST_TIME_SETUP' | 'FORGOT_PASSWORD'>('LOGIN');
@@ -916,6 +989,13 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
                   </span>
                   {isLockedItem ? (
                     <Lock className="w-3.5 h-3.5 text-rose-400" />
+                  ) : item.id === 'teachers_corner' && unreadMessageCount > 0 ? (
+                    <span
+                      data-testid="fab-office-messages-badge"
+                      className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black text-white"
+                    >
+                      {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                    </span>
                   ) : isActive ? (
                     <span className="w-2 h-2 rounded-full bg-amber-300" />
                   ) : null}
@@ -923,6 +1003,25 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
               );
             })}
           </div>
+
+          {isStaffLoggedIn && (
+            <div className="mt-2 border-t border-slate-800 pt-2">
+              <button
+                type="button"
+                onClick={() => void enablePushNotifications()}
+                disabled={isSettingUpPush}
+                className="flex min-h-[42px] w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-bold text-indigo-200 hover:bg-slate-800 disabled:opacity-60"
+              >
+                <BellRing className="h-4 w-4 shrink-0" />
+                {isSettingUpPush ? 'Enabling notifications…' : 'Enable message notifications'}
+              </button>
+              {pushSetupMessage && (
+                <p role="status" className="px-2.5 pt-1 text-[10px] text-slate-300">
+                  {pushSetupMessage}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Install on Device (PWA) inside FAB Only */}
           <div className="mt-2 pt-2 border-t border-slate-800">
@@ -934,9 +1033,9 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
         <button
           type="button"
           data-testid="fab-navigation-toggle"
-          aria-label={isFabMenuOpen ? 'Close Navigation Menu' : 'Open Navigation Menu'}
+          aria-label={`${isFabMenuOpen ? 'Close Navigation Menu' : 'Open Navigation Menu'}${unreadMessageCount > 0 ? `, ${unreadMessageCount} unread messages` : ''}`}
           onClick={() => setIsFabMenuOpen(prev => !prev)}
-          className={`w-14 h-14 rounded-full shadow-2xl flex items-center justify-center text-white border-2 cursor-pointer transition-all duration-300 ${
+          className={`relative flex h-14 w-14 items-center justify-center rounded-full border-2 text-white shadow-2xl transition-all duration-300 cursor-pointer ${
             isFabMenuOpen
               ? 'bg-rose-600 border-rose-400 rotate-90 scale-105'
               : 'bg-indigo-600 hover:bg-indigo-500 border-indigo-400/80 rotate-0 scale-100'
@@ -946,6 +1045,11 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
           }}
         >
           {isFabMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          {unreadMessageCount > 0 && !isFabMenuOpen && (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-rose-500 px-1 text-[9px] font-black text-white">
+              {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+            </span>
+          )}
         </button>
       </div>
 

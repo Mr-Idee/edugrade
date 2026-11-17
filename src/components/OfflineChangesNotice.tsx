@@ -284,7 +284,7 @@ export const OfflineChangesNotice: React.FC = () => {
 
   if (!pendingOfflineSnapshot) {
     return autoCommitMessage
-      ? <div role="status" className="fixed bottom-4 right-4 z-[105] max-w-sm rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs font-semibold text-emerald-900 shadow-xl">{autoCommitMessage}</div>
+      ? <div role="status" className="fixed bottom-4 right-[calc(5rem_+_env(safe-area-inset-right))] z-[105] max-w-[calc(100vw_-_6.5rem)] rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs font-semibold text-emerald-900 shadow-xl sm:max-w-sm">{autoCommitMessage}</div>
       : null;
   }
 
@@ -300,24 +300,24 @@ export const OfflineChangesNotice: React.FC = () => {
   return (
     <>
       {!isOpen && (
-        <div className="fixed bottom-4 right-4 z-[105] flex max-w-sm items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-xl">
+        <div className="fixed bottom-4 right-[calc(5rem_+_env(safe-area-inset-right))] z-[105] flex max-w-[calc(100vw_-_6.5rem)] items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 p-2.5 shadow-xl sm:right-[calc(6rem_+_env(safe-area-inset-right))] sm:max-w-sm sm:gap-3 sm:p-3">
           <Cloud className="h-5 w-5 shrink-0 text-amber-700" />
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-black text-amber-950">
+            <div className="text-[11px] font-black text-amber-950 sm:text-xs">
               {isCommitting
                 ? 'Syncing offline changes…'
                 : canCommit
                   ? 'Offline changes need review'
                   : 'Changes saved on this device'}
             </div>
-            <div className="text-[11px] text-amber-800">
+            <div className="text-[10px] text-amber-800 sm:text-[11px]">
               {changeEntries.length + pendingOfflineDocumentCount} pending changes
             </div>
           </div>
           <button
             type="button"
             onClick={() => setIsOpen(true)}
-            className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-bold text-white"
+            className="shrink-0 rounded-lg bg-amber-700 px-2 py-1.5 text-[10px] font-bold text-white sm:px-3 sm:text-xs"
           >
             Review
           </button>

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { lazy, Suspense, useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Navigation } from './components/Navigation';
 import { OfflineChangesNotice } from './components/OfflineChangesNotice';
@@ -49,12 +49,106 @@ function MainAppContent() {
     currentRole,
     isStaffLoggedIn,
     openAuthModal,
+    currentUser,
+    officeMessages,
     schoolProfile,
     currentSession,
     setSelectedStudentId,
     setSelectedSectionId,
     setSelectedSubjectId
   } = useApp();
+  const [notificationMessageId] = useState(() =>
+    typeof window === 'undefined'
+      ? ''
+      : new URLSearchParams(window.location.search).get('messageId') || ''
+  );
+  const notificationAuthRequestedRef = useRef(false);
+
+  useEffect(() => {
+    if (!notificationMessageId || notificationAuthRequestedRef.current) return;
+    notificationAuthRequestedRef.current = true;
+    const openPendingMessage = () => setActiveTab('teachers_corner');
+    if (!isStaffLoggedIn) {
+      openAuthModal(openPendingMessage);
+      return;
+    }
+    openPendingMessage();
+  }, [notificationMessageId, isStaffLoggedIn, openAuthModal]);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      !('Notification' in window) ||
+      Notification.permission !== 'granted' ||
+      !('serviceWorker' in navigator)
+    ) return;
+    void fetch('/api/push/notify-pending', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    }).then(async response => {
+      if (response.status === 401) return;
+      const result = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || 'Could not check for pending office messages.');
+      }
+    }).catch(error => {
+      console.error('Could not check for pending office-message notifications.', error);
+    });
+  }, [isStaffLoggedIn]);
+
+  useEffect(() => {
+    if (
+      !isStaffLoggedIn ||
+      typeof window === 'undefined' ||
+      !('Notification' in window) ||
+      Notification.permission !== 'granted' ||
+      !('serviceWorker' in navigator)
+    ) return;
+    const pendingMessages = officeMessages.filter(message =>
+      (message.recipientTeacherId === 'ALL' ||
+        Number(message.recipientTeacherId) === Number(currentUser.id)) &&
+      !message.readByTeacherIds.includes(currentUser.id)
+    );
+    if (!pendingMessages.length) return;
+
+    const storageKey = `edugrade_notified_office_messages_${currentUser.id}`;
+    let notifiedIds: string[] = [];
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      const parsed: unknown = saved ? JSON.parse(saved) : [];
+      if (Array.isArray(parsed)) notifiedIds = parsed.filter((id): id is string => typeof id === 'string');
+    } catch (error) {
+      console.error('Could not read the pending-message notification history.', error);
+    }
+    const newPendingMessages = pendingMessages.filter(message => !notifiedIds.includes(message.id));
+    if (!newPendingMessages.length) return;
+
+    const newestMessage = newPendingMessages[0];
+    void navigator.serviceWorker.ready.then(async registration => {
+      if (await registration.pushManager.getSubscription()) return false;
+      await registration.showNotification('Pending office messages', {
+        body: `You have ${pendingMessages.length} unread message${pendingMessages.length === 1 ? '' : 's'}. Sign in to view.`,
+        icon: '/pwa-192x192.png',
+        badge: '/pwa-192x192.png',
+        tag: `office-messages-${currentUser.id}`,
+        data: { url: `/?messageId=${encodeURIComponent(newestMessage.id)}` }
+      });
+      return true;
+    }).then(didDisplayNotification => {
+      if (!didDisplayNotification) return;
+      try {
+        window.localStorage.setItem(
+          storageKey,
+          JSON.stringify([...new Set([...notifiedIds, ...pendingMessages.map(message => message.id)])])
+        );
+      } catch (error) {
+        console.error('Could not save the pending-message notification history.', error);
+      }
+    }).catch(error => {
+      console.error('Could not display pending office-message notifications.', error);
+    });
+  }, [currentUser.id, isStaffLoggedIn, officeMessages]);
 
   // Dynamically sync browser web tab title and favicon with the School Name and School Logo
   useEffect(() => {
@@ -183,7 +277,10 @@ function MainAppContent() {
           )}
 
           {isStaffLoggedIn && effectiveTab === 'teachers_corner' && (
-            <TeachersCornerView onOpenReportCard={handleViewReportCard} />
+            <TeachersCornerView
+              onOpenReportCard={handleViewReportCard}
+              initialMessageId={notificationMessageId || undefined}
+            />
           )}
 
           {isStaffLoggedIn && (effectiveTab === 'grid' || effectiveTab === 'registry') && (

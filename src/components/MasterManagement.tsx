@@ -1686,6 +1686,20 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                   </p>
                 </div>
 
+                <div>
+                  <label className="block font-bold text-slate-700 uppercase mb-1 text-[11px]">
+                    WhatsApp Phone (Optional)
+                  </label>
+                  <input
+                    type="tel"
+                    value={newTeacherPhone}
+                    onChange={event => setNewTeacherPhone(event.target.value)}
+                    autoComplete="tel"
+                    placeholder="e.g. +234 801 234 5678"
+                    className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block font-bold text-slate-700 uppercase mb-1 text-[11px]">Staff ID (Optional)</label>
