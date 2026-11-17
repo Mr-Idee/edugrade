@@ -859,7 +859,7 @@ async function saveState(
         p_audit_logs: newAuditLogs
       });
 
-  for (let attempt = 0; scoreOnlyChange && result.error?.code === '40001' && attempt < 2; attempt += 1) {
+  for (let attempt = 0; scoreOnlyChange && result.error?.code === '40001' && attempt < 1; attempt += 1) {
     const latest = await loadState();
     if (!latest || !writeBase) break;
     const rebasedSnapshot = rebaseScoreStateChanges(
@@ -876,7 +876,6 @@ async function saveState(
       throw conflict;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 25 + Math.floor(Math.random() * 76)));
     writeBase = latest;
     writeSnapshot = rebasedSnapshot;
     writeRevision = latest.state_revision;

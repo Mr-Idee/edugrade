@@ -1277,6 +1277,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const backendRevisionRef = useRef<string | null>(null);
   const backendSyncInFlightRef = useRef(false);
   const backendSyncPendingRef = useRef(false);
+  const backendConflictRef = useRef(false);
   const syncToBackendRef = useRef<(() => Promise<{
     savedToDatabase: boolean;
     savedToNodeDisk: boolean;
@@ -4009,6 +4010,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           : localSnapshot;
         backendBaseSnapshotRef.current = persistedSnapshot;
         backendRevisionRef.current = stateData.stateRevision || null;
+        backendConflictRef.current = false;
         const snapshot = persistedSnapshot || (
           queuedChanges
             ? reconcileExecutiveStaffSnapshot(queuedChanges.snapshot)
@@ -4468,6 +4470,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: 'Database save is waiting for persisted school records to finish loading.'
       };
     }
+    if (backendConflictRef.current) {
+      return {
+        savedToDatabase: false,
+        savedToNodeDisk: false,
+        message: 'Automatic saving is paused because the database changed elsewhere. Reload the page to load the latest records before continuing.'
+      };
+    }
     const snapshot = omitSessionArchives(buildSnapshot()) as FullDatabaseSnapshot;
     if (pendingOfflineSnapshotRef.current || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       try {
@@ -4545,7 +4554,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       } else {
         const data = await res.json().catch(() => null);
-        const message = data?.error || `Database sync failed (HTTP ${res.status})`;
+        const isRevisionConflict = res.status === 409;
+        const message = isRevisionConflict
+          ? 'Database records changed elsewhere. Automatic saving is paused; reload the page to load the latest records before continuing.'
+          : data?.error || `Database sync failed (HTTP ${res.status})`;
+        if (isRevisionConflict) {
+          backendConflictRef.current = true;
+          backendSyncPendingRef.current = false;
+        }
         const shouldQueueOffline = shouldQueueOfflineChanges(
           typeof navigator === 'undefined' || navigator.onLine,
           res.status
@@ -4617,10 +4633,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       backendSyncInFlightRef.current = false;
       if (backendSyncPendingRef.current) {
         backendSyncPendingRef.current = false;
-        if (shouldDrainPendingSync) {
+        if (shouldDrainPendingSync && !backendConflictRef.current) {
           window.setTimeout(() => {
             void syncToBackendRef.current?.();
-          }, 0);
+          }, 1500);
         }
       }
     }
