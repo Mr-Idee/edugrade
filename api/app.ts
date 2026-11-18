@@ -24,6 +24,7 @@ import {
 } from '../src/utils/sqlExportGenerator.ts';
 import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
 import { mergeScopedScoreAuditLogs } from '../src/utils/scoreAudit.ts';
+import { prepareFormTutorStudentAdditions } from '../src/utils/formTutorEnrollment.ts';
 import {
   preserveStudentCommentsForSubjectTeacher,
   preserveTeacherRemarksForSuperAdmin
@@ -833,8 +834,11 @@ function mergeScopedSnapshot(
   }
   if (isAdmin(identity.record.role)) return normalizeEnrollmentIds(submitted);
   const scope = getTeacherAccessScope(current, identity);
-  const { teacher, sectionIds, canEditSubject } = scope;
+  const { teacher, formSectionId, sectionIds, canEditSubject, isFormTutor } = scope;
   const hodDepartments = getHodDepartmentsForTeacher(current, teacher, identity.username);
+  const { students: newFormTutorStudents, enrollments: newFormTutorEnrollments } =
+    prepareFormTutorStudentAdditions(current, submitted, { isFormTutor, formSectionId });
+
   const studentSectionIds = new Map<number, number>();
   for (const student of current.students) {
     const studentId = positiveId(student.id);
@@ -875,6 +879,8 @@ function mergeScopedSnapshot(
     : submitted.termSummaries;
   const merged: FullDatabaseSnapshot = {
     ...current,
+    students: [...current.students, ...newFormTutorStudents],
+    enrollments: [...current.enrollments, ...newFormTutorEnrollments],
     scores: mergeScopedRecords(current.scores, submitted.scores),
     termSubjectRecords: mergeScopedRecords(current.termSubjectRecords, submitted.termSubjectRecords),
     termSummaries: mergeById(

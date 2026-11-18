@@ -122,6 +122,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     subjects,
     students,
     enrollments,
+    addStudent,
     termSubjectRecords,
     termSummaries,
     updateTermSubjectScore,
@@ -338,9 +339,59 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
   const activeCardStudents = activeCard
     ? students.filter(student => student.currentSectionId === activeCard.sectionId)
     : [];
+  const formTutorSection = classSections.find(
+    section => section.id === cornerTeacher?.assignedSectionId
+  );
+  const canEnrollFormClassStudents =
+    currentRole === 'CLASS_TEACHER' && Boolean(formTutorSection);
+  const [isAddFormStudentOpen, setIsAddFormStudentOpen] = useState(false);
+  const [newFormStudentName, setNewFormStudentName] = useState('');
+  const [newFormStudentAdmission, setNewFormStudentAdmission] = useState('');
+  const [newFormStudentGender, setNewFormStudentGender] = useState<'MALE' | 'FEMALE'>('MALE');
+  const [formStudentNotice, setFormStudentNotice] = useState<{
+    type: 'success' | 'error';
+    text: string;
+  } | null>(null);
 
   const [inspectingStudent, setInspectingStudent] = useState<Student | null>(null);
   const [scoreSaveNotice, setScoreSaveNotice] = useState<string | null>(null);
+
+  const handleAddFormStudent = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canEnrollFormClassStudents || !formTutorSection) return;
+
+    const fullName = newFormStudentName.trim();
+    const admissionNumber = newFormStudentAdmission.trim().toUpperCase();
+    if (!fullName || !admissionNumber) {
+      setFormStudentNotice({ type: 'error', text: 'Enter the student name and admission number.' });
+      return;
+    }
+    if (students.some(student =>
+      student.admissionNumber.trim().toUpperCase() === admissionNumber
+    )) {
+      setFormStudentNotice({
+        type: 'error',
+        text: `Admission number ${admissionNumber} is already in use.`
+      });
+      return;
+    }
+
+    const student = addStudent({
+      fullName,
+      admissionNumber,
+      currentSectionId: formTutorSection.id,
+      gender: newFormStudentGender,
+      promotionStatus: 'ENROLLED'
+    });
+    setNewFormStudentName('');
+    setNewFormStudentAdmission('');
+    setNewFormStudentGender('MALE');
+    setIsAddFormStudentOpen(false);
+    setFormStudentNotice({
+      type: 'success',
+      text: `${student.fullName} was added to ${formTutorSection.name} and enrolled in all applicable subjects. Senior optional subjects can be selected in the subject matrix.`
+    });
+  };
 
   // Teacher Document Upload Form State
   const [selectedSlotId, setSelectedSlotId] = useState<string>(
@@ -2393,6 +2444,110 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                 </select>
               </div>
             </div>
+          )}
+
+          {canEnrollFormClassStudents && formTutorSection && (
+            <section
+              data-testid="form-tutor-student-enrollment"
+              className="rounded-2xl border border-sky-200 bg-sky-50 p-5 shadow-xs"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-black text-slate-900">
+                    {formTutorSection.name} Student Enrollment
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {students.filter(student => student.currentSectionId === formTutorSection.id).length} students in your form class.
+                    New students are enrolled in every applicable subject; senior subject choices remain adjustable in the matrix.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  data-testid="form-tutor-add-student-button"
+                  onClick={() => {
+                    setFormStudentNotice(null);
+                    setIsAddFormStudentOpen(open => !open);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-sky-700 px-4 py-2.5 text-xs font-black text-white shadow-sm hover:bg-sky-800"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add student
+                </button>
+              </div>
+
+              {formStudentNotice && (
+                <p
+                  role={formStudentNotice.type === 'error' ? 'alert' : 'status'}
+                  className={`mt-3 rounded-xl border px-3 py-2 text-xs font-bold ${
+                    formStudentNotice.type === 'error'
+                      ? 'border-rose-200 bg-rose-50 text-rose-800'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  }`}
+                >
+                  {formStudentNotice.text}
+                </p>
+              )}
+
+              {isAddFormStudentOpen && (
+                <form
+                  data-testid="form-tutor-add-student-form"
+                  onSubmit={handleAddFormStudent}
+                  className="mt-4 grid grid-cols-1 gap-3 border-t border-sky-200 pt-4 sm:grid-cols-2"
+                >
+                  <label className="text-xs font-bold text-slate-700">
+                    Student full name
+                    <input
+                      autoComplete="name"
+                      data-testid="form-tutor-student-name"
+                      required
+                      maxLength={160}
+                      value={newFormStudentName}
+                      onChange={event => setNewFormStudentName(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium"
+                    />
+                  </label>
+                  <label className="text-xs font-bold text-slate-700">
+                    Admission number
+                    <input
+                      data-testid="form-tutor-student-admission"
+                      required
+                      maxLength={80}
+                      value={newFormStudentAdmission}
+                      onChange={event => setNewFormStudentAdmission(event.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium uppercase"
+                    />
+                  </label>
+                  <label className="text-xs font-bold text-slate-700 sm:col-span-2">
+                    Gender
+                    <select
+                      data-testid="form-tutor-student-gender"
+                      value={newFormStudentGender}
+                      onChange={event => setNewFormStudentGender(event.target.value as 'MALE' | 'FEMALE')}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium sm:max-w-xs"
+                    >
+                      <option value="MALE">Male</option>
+                      <option value="FEMALE">Female</option>
+                    </select>
+                  </label>
+                  <div className="flex flex-wrap gap-2 sm:col-span-2">
+                    <button
+                      type="submit"
+                      data-testid="form-tutor-save-student"
+                      className="rounded-lg bg-emerald-700 px-4 py-2 text-xs font-black text-white hover:bg-emerald-800"
+                    >
+                      Enroll student
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddFormStudentOpen(false)}
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </section>
           )}
 
           {/* ============================================================= */}
