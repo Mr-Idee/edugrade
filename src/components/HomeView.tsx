@@ -43,6 +43,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     isStaffLoggedIn,
     openAuthModal,
     teachers,
+    totalStaffCount,
     students,
     subjects,
     classSections
@@ -193,7 +194,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               Total Staff
             </span>
             <span className="text-2xl sm:text-3xl font-black text-slate-900 font-mono tabular-nums mt-1 block">
-              {teachers.length}
+              {fullSubjectClearance ? teachers.length : totalStaffCount}
             </span>
             <span className="text-[11px] text-slate-500 mt-1 block">
               Form Tutors &amp; Subject Teachers

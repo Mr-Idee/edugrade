@@ -728,7 +728,7 @@ function filterSnapshotForStaff(
   }));
   const scoped: FullDatabaseSnapshot = {
     ...snapshot,
-    classSections: sections,
+    classSections: sections.length > 0 ? sections : snapshot.classSections.slice(0, 1),
     teachers: teacher ? [teacher] : [],
     subjects: snapshot.subjects.filter(subject =>
       isFormTutor ||
@@ -1773,6 +1773,7 @@ app.get('/api/state', async (request: AuthenticatedRequest, response, next) => {
       databaseConnected: true,
       storageMode: 'SUPABASE_LIVE',
       stateRevision: row?.state_revision || null,
+      staffCount: row?.state_json.teachers.length || 0,
       state: row ? filterSnapshotForStaff(row.state_json, request.auth!) : null
     });
   } catch (error) {

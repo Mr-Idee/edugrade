@@ -95,9 +95,14 @@ import {
   getTeacherHodDesignation,
   canAssignStaffRole,
   canAccessSystemBackup,
-  canManageStaffAuth
+  canManageStaffAuth,
+  hasAllSubjectsClearance
 } from '../utils/rbacAndAuth';
-import { findTeacherForUser } from '../utils/staffRolePolicy';
+import {
+  findTeacherForUser,
+  getStaffVisibleToUser,
+  resolveTeacherScoreSelection
+} from '../utils/staffRolePolicy';
 import { canAccessStudentComments } from '../utils/studentCommentPolicy';
 import {
   SystemBackupRecord,
@@ -197,6 +202,7 @@ interface AppContextType {
 
   // Teachers, Form Tutor & Subject Assignments + Passwordless Creation / First-Login / Reset Flow
   teachers: Teacher[];
+  totalStaffCount: number;
   addTeacher: (teacher: Omit<Teacher, 'id'>) => Promise<Teacher>;
   updateTeacher: (id: number, data: Partial<Teacher>) => void;
   updateTeacherSystemRole: (teacherId: number, systemRole: UserRole) => Promise<{ ok: boolean; message: string }>;
@@ -546,6 +552,18 @@ function reconcileExecutiveStaffSnapshot(snapshot: FullDatabaseSnapshot): FullDa
   return { ...snapshot, teachers };
 }
 
+function reconcileStaffSnapshotForUser(
+  snapshot: FullDatabaseSnapshot,
+  user: User,
+  role: UserRole
+): FullDatabaseSnapshot {
+  if (hasAllSubjectsClearance(role)) return reconcileExecutiveStaffSnapshot(snapshot);
+  return {
+    ...snapshot,
+    teachers: getStaffVisibleToUser(snapshot.teachers, user, false)
+  };
+}
+
 const initialCustomReportTemplates: CustomReportTemplate[] = initialClassSections.map(sec => {
   const isJunior = sec.levelType === 'JUNIOR';
   const defaultSubjects = initialSubjects
@@ -883,6 +901,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return initialTeachers;
   });
+  const [totalStaffCount, setTotalStaffCount] = useState(() => teachers.length);
 
   const [subjects, setSubjects] = useState<Subject[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SUBJECTS);
@@ -2090,7 +2109,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Keep currentUser in sync if they are the affected teacher
       setCurrentUser(curr => {
-        const matched = next.find(t => t.id === curr.id || t.username === curr.username);
+        const matched = findTeacherForUser(next, curr);
         if (matched) {
           return { ...curr, assignedSubjects: matched.assignedSubjects || [] };
         }
@@ -2114,7 +2133,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       });
       setCurrentUser(curr => {
-        const matched = next.find(t => t.id === curr.id || t.username === curr.username);
+        const matched = findTeacherForUser(next, curr);
         if (matched) {
           return { ...curr, assignedSubjects: matched.assignedSubjects || [] };
         }
@@ -4018,19 +4037,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const localSnapshot = getCurrentSnapshot();
         const persistedSnapshot = stateData.state
           ? omitSessionArchives(
-              reconcileExecutiveStaffSnapshot(stateData.state as FullDatabaseSnapshot)
+              reconcileStaffSnapshotForUser(
+                stateData.state as FullDatabaseSnapshot,
+                currentUser,
+                currentRole
+              )
             ) as FullDatabaseSnapshot
           : localSnapshot;
+        const reportedStaffCount = Number(stateData.staffCount);
+        setTotalStaffCount(
+          Number.isSafeInteger(reportedStaffCount) && reportedStaffCount >= 0
+            ? reportedStaffCount
+            : persistedSnapshot.teachers.length
+        );
         backendBaseSnapshotRef.current = persistedSnapshot;
         backendRevisionRef.current = stateData.stateRevision || null;
         backendConflictRef.current = false;
         setBackendSavePaused(false);
         const snapshot = persistedSnapshot || (
           queuedChanges
-            ? reconcileExecutiveStaffSnapshot(queuedChanges.snapshot)
+            ? reconcileStaffSnapshotForUser(queuedChanges.snapshot, currentUser, currentRole)
             : null
         );
-        if (snapshot) applySnapshotToState(snapshot);
+        if (snapshot) {
+          if (!hasAllSubjectsClearance(currentRole)) {
+            const teacher = findTeacherForUser(snapshot.teachers, currentUser);
+            const assignment = resolveTeacherScoreSelection(
+              teacher?.assignedSubjects,
+              snapshot.classSections,
+              snapshot.subjects,
+              selectedSectionId,
+              selectedSubjectId
+            );
+            if (assignment) {
+              setSelectedSectionId(Number(assignment.sectionId));
+              setSelectedSubjectId(Number(assignment.subjectId));
+            } else if (
+              !snapshot.classSections.some(
+                section => Number(section.id) === Number(selectedSectionId)
+              ) &&
+              snapshot.classSections[0]
+            ) {
+              setSelectedSectionId(Number(snapshot.classSections[0].id));
+            }
+          }
+          applySnapshotToState(snapshot);
+        }
 
         const statusRes = await fetch('/api/db/status');
         const statusData = statusRes.ok ? await statusRes.json() : null;
@@ -4066,7 +4118,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (error) {
         if (cancelled) return;
         if (queuedChanges) {
-          applySnapshotToState(reconcileExecutiveStaffSnapshot(queuedChanges.snapshot));
+          applySnapshotToState(
+            reconcileStaffSnapshotForUser(queuedChanges.snapshot, currentUser, currentRole)
+          );
           pendingOfflineSnapshotRef.current = queuedChanges;
           setPendingOfflineSnapshot(queuedChanges);
           setOfflineSyncMessage('The database is unavailable. Your pending offline changes are preserved on this device.');
@@ -4088,7 +4142,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       cancelled = true;
     };
-  }, [applySnapshotToState]);
+  }, [applySnapshotToState, currentRole, currentUser.id, currentUser.username]);
 
   const buildFullSystemStateSnapshot = useCallback((): SystemStateSnapshot => {
     return {
@@ -4793,7 +4847,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         throw new Error(result.error || 'Could not commit pending changes to the database.');
       }
 
-      const committedSnapshot = reconcileExecutiveStaffSnapshot(result.state as FullDatabaseSnapshot);
+      const committedSnapshot = reconcileStaffSnapshotForUser(
+        result.state as FullDatabaseSnapshot,
+        currentUser,
+        currentRole
+      );
       backendBaseSnapshotRef.current = committedSnapshot;
       backendRevisionRef.current = result.stateRevision || null;
       const clearedPendingSnapshot = await clearPendingOfflineSnapshotIfMatches(queueToCommit.commitId || '');
@@ -4857,7 +4915,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }));
       return { ok: false, message };
     }
-  }, [applySnapshotToState, backendStatus.databaseConnected, currentUser.username]);
+  }, [
+    applySnapshotToState,
+    backendStatus.databaseConnected,
+    currentRole,
+    currentUser.id,
+    currentUser.username
+  ]);
 
   // Initialize MySQL schema & seed all relational tables
   const initializeMysqlDatabase = useCallback(async (): Promise<{ ok: boolean; message: string; tablesCount?: number }> => {
@@ -5072,6 +5136,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateClassSection,
         deleteClassSection,
         teachers,
+        totalStaffCount,
         addTeacher,
         updateTeacher,
         updateTeacherSystemRole,
