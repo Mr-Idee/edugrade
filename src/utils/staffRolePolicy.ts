@@ -28,6 +28,24 @@ export interface TeacherSubjectAssignmentIssue {
     | 'invalid-religious-choice';
 }
 
+export interface TeacherSubjectAssignmentOption {
+  subject: Subject;
+  religiousStudiesChoice?: ReligiousStudiesChoice;
+}
+
+export function expandTeacherSubjectAssignmentOptions(
+  subjects: readonly Subject[]
+): TeacherSubjectAssignmentOption[] {
+  return subjects.flatMap(subject =>
+    Number(subject.id) === RELIGIOUS_STUDIES_SUBJECT_ID
+      ? (['CRS', 'IRS'] as const).map(religiousStudiesChoice => ({
+          subject,
+          religiousStudiesChoice
+        }))
+      : [{ subject }]
+  );
+}
+
 export function findTeacherForUser<T extends { id: number; username?: string }>(
   teachers: readonly T[],
   user: { id: number; username?: string }

@@ -31,6 +31,7 @@ import {
   getSubjectDisplayName,
   isReligiousStudiesSubject
 } from '../utils/subjectDisplay';
+import { expandTeacherSubjectAssignmentOptions } from '../utils/staffRolePolicy';
 import {
   formatBackupTimestamp,
   formatByteSize,
@@ -528,6 +529,10 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
       sub => sub.applicableLevel === sec.levelType || sub.applicableLevel === 'BOTH'
     );
   }, [classSections, subjects, assignSubjSectionId]);
+  const assignableSubjectOptions = React.useMemo(
+    () => expandTeacherSubjectAssignmentOptions(assignableSubjectsForSelectedClass),
+    [assignableSubjectsForSelectedClass]
+  );
 
   const [assignSubjSubjectId, setAssignSubjSubjectId] = useState<number>(
     assignableSubjectsForSelectedClass[0]?.id || subjects[0]?.id || 1
@@ -1969,7 +1974,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                       Teacher Subject Clearance &amp; Class Assignment Matrix
                     </h4>
                     <p className="text-[11px] text-indigo-200">
-                      New staff have no score access until assigned. Assign each teacher a class and subject here; they can then view and edit scores for those assignments only.
+                      New staff have no score access until assigned. Assign each teacher a class and subject here; they can then view and edit scores for those assignments only. CRS and IRS are separate options, and score access follows each student's selected group.
                     </p>
                   </div>
                 </div>
@@ -1999,51 +2004,52 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                     </label>
                     <select
                       data-testid="assign-subj-subject-select"
-                      value={assignSubjSubjectId}
-                      onChange={(e) => setAssignSubjSubjectId(Number(e.target.value))}
+                      value={
+                        isAssigningReligiousStudies
+                          ? `${assignSubjSubjectId}:${assignSubjReligiousChoice}`
+                          : String(assignSubjSubjectId)
+                      }
+                      onChange={event => {
+                        const selectedOption = assignableSubjectOptions.find(option => {
+                          const optionValue = option.religiousStudiesChoice
+                            ? `${option.subject.id}:${option.religiousStudiesChoice}`
+                            : String(option.subject.id);
+                          return optionValue === event.target.value;
+                        });
+                        if (!selectedOption) return;
+                        setAssignSubjSubjectId(selectedOption.subject.id);
+                        if (selectedOption.religiousStudiesChoice) {
+                          setAssignSubjReligiousChoice(selectedOption.religiousStudiesChoice);
+                        }
+                      }}
                       className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
                     >
-                      {assignableSubjectsForSelectedClass.map(sub => {
+                      {assignableSubjectOptions.map(option => {
                         const displayName = getSubjectDisplayName(
-                          sub,
+                          option.subject,
                           Number(assignSubjSectionId),
-                          isReligiousStudiesSubject(sub) ? assignSubjReligiousChoice : undefined
+                          option.religiousStudiesChoice
                         );
                         const holder = getAssignedTeacherForSubject(
                           assignSubjSectionId,
-                          sub.id,
-                          isReligiousStudiesSubject(sub) ? assignSubjReligiousChoice : undefined
+                          option.subject.id,
+                          option.religiousStudiesChoice
                         );
+                        const optionValue = option.religiousStudiesChoice
+                          ? `${option.subject.id}:${option.religiousStudiesChoice}`
+                          : String(option.subject.id);
                         return (
-                          <option key={sub.id} value={sub.id}>
+                          <option
+                            key={optionValue}
+                            value={optionValue}
+                            data-testid={`assign-subj-option-${option.subject.id}-${option.religiousStudiesChoice || 'default'}`}
+                          >
                             {displayName} {holder ? `(Assigned: ${holder.fullName})` : '(Unassigned)'}
                           </option>
                         );
                       })}
                     </select>
                   </div>
-
-                  {isAssigningReligiousStudies && (
-                    <div>
-                      <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
-                        Religious Studies Group
-                      </label>
-                      <select
-                        data-testid="assign-subj-religious-choice"
-                        value={assignSubjReligiousChoice}
-                        onChange={event => {
-                          const choice = event.target.value;
-                          if (choice === 'CRS' || choice === 'IRS') {
-                            setAssignSubjReligiousChoice(choice);
-                          }
-                        }}
-                        className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
-                      >
-                        <option value="CRS">Christian Religious Studies (CRS)</option>
-                        <option value="IRS">Islamic Religious Studies (IRS)</option>
-                      </select>
-                    </div>
-                  )}
 
                   <div>
                     <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">

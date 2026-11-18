@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   canViewSubjectRecordInReport,
+  expandTeacherSubjectAssignmentOptions,
   getStaffVisibleToUser,
   findTeacherForUser,
   findNewInvalidTeacherSubjectAssignments,
@@ -132,6 +133,22 @@ test('religious studies assignments isolate CRS and IRS while sharing one subjec
   assert.equal(hasTeacherSubjectAssignment(assignments, 7, 35, 'IRS'), true);
   assert.equal(hasTeacherSubjectAssignment(assignments, 8, 35, 'CRS'), false);
   assert.equal(hasTeacherSubjectAssignment([{ sectionId: 7, subjectId: 35 }], 7, 35, 'CRS'), false);
+});
+
+test('teacher assignment options list CRS and IRS separately under the shared subject ID', () => {
+  const subjects: Subject[] = [
+    { id: 35, name: 'CRS/IRS', code: 'CRS', category: 'CORE', applicableLevel: 'JUNIOR' },
+    { id: 2, name: 'Mathematics', code: 'MATH', category: 'CORE', applicableLevel: 'JUNIOR' }
+  ];
+
+  assert.deepEqual(
+    expandTeacherSubjectAssignmentOptions(subjects),
+    [
+      { subject: subjects[0], religiousStudiesChoice: 'CRS' },
+      { subject: subjects[0], religiousStudiesChoice: 'IRS' },
+      { subject: subjects[1] }
+    ]
+  );
 });
 
 test('new religious studies assignments require a valid religion choice', () => {

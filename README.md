@@ -127,7 +127,10 @@ For each student, the authorized staff member records the choice for the
 active academic session. A student takes one of the two options, not both.
 Teacher assignments specify CRS or IRS, and the score-entry and report
 workflows respect the student's session choice and the teacher's assignment.
-The existing subject and score identity is retained.
+Master Settings lists CRS and IRS as separate teacher-assignment options. The
+existing subject and score identity is retained; a student's selected group
+determines which Religious Studies scores their teacher can view and edit and
+which CRS/IRS label appears on reports.
 
 ### 4. Enter and review assessment results
 
