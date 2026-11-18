@@ -53,6 +53,7 @@ function MainAppContent() {
     officeMessages,
     schoolProfile,
     currentSession,
+    backendStatus,
     backendSavePaused,
     setSelectedStudentId,
     setSelectedSectionId,
@@ -268,18 +269,11 @@ function MainAppContent() {
       {isStaffLoggedIn && <OfflineChangesNotice />}
       {isStaffLoggedIn && backendSavePaused && (
         <div className="mx-auto mt-3 w-full max-w-7xl px-3 sm:px-6 lg:px-8" role="alert">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
             <p>
-              Automatic saving is paused because the database changed in another session.
-              Reload to get the latest records. Unsaved changes in this tab may be lost.
+              {backendStatus.statusMessage || 'Automatic saving is paused while an unsaved change is resolved.'}
+              {' '}Review the offline changes prompt before leaving this page; do not reload while changes are pending.
             </p>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="shrink-0 rounded-lg bg-amber-900 px-3 py-2 font-semibold text-white hover:bg-amber-800"
-            >
-              Reload records
-            </button>
           </div>
         </div>
       )}

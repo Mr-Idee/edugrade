@@ -1148,6 +1148,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsAuthModalOpen(false);
   }, []);
 
+  const requireStaffSignIn = useCallback(() => {
+    try {
+      window.sessionStorage.removeItem(STAFF_SESSION_STORAGE_KEY);
+    } catch {
+      // The local session state still requires reauthentication.
+    }
+    setIsStaffLoggedIn(false);
+    setIsSecurityUnlocked(false);
+    setCurrentUser(signedOutUser);
+    setIsAuthModalOpen(true);
+  }, []);
+
   const completeStaffLogin = useCallback((user: User, role: UserRole, sectionId?: number) => {
     const normalizedRole = normalizeUserRole(role);
     const uname = (user.username || generateTeacherUsername(user.fullName)).toLowerCase();
@@ -1308,7 +1320,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }>) | null>(null);
   const buildSnapshotRef = useRef<(() => FullDatabaseSnapshot) | null>(null);
   const persistOfflineSnapshotRef = useRef<
-    ((snapshot: FullDatabaseSnapshot) => Promise<PendingOfflineSnapshot<FullDatabaseSnapshot>>) | null
+    ((
+      snapshot: FullDatabaseSnapshot,
+      blockedReason?: 'AUTH' | 'VALIDATION'
+    ) => Promise<PendingOfflineSnapshot<FullDatabaseSnapshot>>) | null
   >(null);
   const getCurrentSnapshot = () => {
     if (!buildSnapshotRef.current) throw new Error('School data is not ready to be saved.');
@@ -3933,9 +3948,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (Array.isArray(snapshot.gradingScalePresets)) setGradingScalePresets(snapshot.gradingScalePresets);
   }, []);
 
-  const persistOfflineSnapshot = useCallback(async (snapshot: FullDatabaseSnapshot) => {
+  const persistOfflineSnapshot = useCallback(async (
+    snapshot: FullDatabaseSnapshot,
+    blockedReason?: 'AUTH' | 'VALIDATION'
+  ) => {
     const now = new Date().toISOString();
     const queuedSnapshot = omitSessionArchives(snapshot) as FullDatabaseSnapshot;
+    const previousQueue = pendingOfflineSnapshotRef.current;
+    if (
+      previousQueue?.actorUsername &&
+      currentUser.username &&
+      previousQueue.actorUsername.toLowerCase() !== currentUser.username.toLowerCase()
+    ) {
+      throw new Error('Pending changes belong to another staff account and were left untouched.');
+    }
+    const hasNewLocalValues = Boolean(
+      previousQueue && !areOfflineValuesEqual(previousQueue.snapshot, queuedSnapshot)
+    );
     const baseSnapshot = omitSessionArchives(
       backendBaseSnapshotRef.current || queuedSnapshot
     ) as FullDatabaseSnapshot;
@@ -3956,12 +3985,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...updatedQueue,
       clientId,
       commitId: createOfflineId(),
-      actorUsername: currentUser.username || ''
+      actorUsername: previousQueue?.actorUsername || currentUser.username || '',
+      requiresUserConfirmation: true,
+      blockedReason: blockedReason || (hasNewLocalValues ? undefined : previousQueue?.blockedReason)
     };
     await savePendingOfflineSnapshot(queue);
     pendingOfflineSnapshotRef.current = queue;
     setPendingOfflineSnapshot(queue);
-    setOfflineSyncMessage('Your changes are saved on this device and need an explicit commit to the database.');
+    if (!previousQueue || hasNewLocalValues) setOfflineConflicts([]);
+    setOfflineSyncMessage(
+      queue.blockedReason === 'AUTH'
+        ? 'Autosave was rejected because staff access is unavailable. Your changes are preserved locally; sign in again before uploading.'
+        : queue.blockedReason === 'VALIDATION'
+          ? 'Autosave was rejected. Your changes are preserved locally; correct the issue before uploading.'
+          : 'Autosave failed. Your changes are preserved locally and need your approval before database upload.'
+    );
     setBackendStatus(previous => ({
       ...previous,
       databaseConnected: typeof navigator === 'undefined' || navigator.onLine
@@ -3974,6 +4012,106 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser.username]);
   persistOfflineSnapshotRef.current = persistOfflineSnapshot;
 
+  const comparePendingOfflineSnapshotWithDatabase = useCallback(async (
+    queue: PendingOfflineSnapshot<FullDatabaseSnapshot>
+  ) => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setOfflineSyncMessage(
+        'Autosave failed while this browser was offline. The latest database will be checked before upload.'
+      );
+      return;
+    }
+    const response = await fetch('/api/state', { cache: 'no-store' });
+    const data = await response.json().catch(() => null) as {
+      ok?: boolean;
+      error?: string;
+      state?: FullDatabaseSnapshot | null;
+      stateRevision?: string | null;
+    } | null;
+    if (!response.ok || !data?.ok || !data.state) {
+      if (response.status === 401 || response.status === 403) {
+        const blockedReason: 'AUTH' | 'VALIDATION' =
+          response.status === 401 ? 'AUTH' : 'VALIDATION';
+        const currentQueue = pendingOfflineSnapshotRef.current;
+        if (currentQueue) {
+          const blockedQueue = { ...currentQueue, blockedReason };
+          await savePendingOfflineSnapshot(blockedQueue);
+          pendingOfflineSnapshotRef.current = blockedQueue;
+          setPendingOfflineSnapshot(blockedQueue);
+        }
+        const message = response.status === 401
+          ? 'Staff sign-in is required before the latest database can be checked.'
+          : 'Your staff account cannot read the latest database records.';
+        setOfflineSyncMessage(`${message} Your changes remain preserved locally.`);
+        setBackendStatus(previous => ({
+          ...previous,
+          databaseConnected: false,
+          statusMessage: message
+        }));
+        if (response.status === 401) requireStaffSignIn();
+        return;
+      }
+      throw new Error(data?.error || `Could not compare with the latest database state (HTTP ${response.status}).`);
+    }
+
+    const latestSnapshot = omitSessionArchives(
+      reconcileStaffSnapshotForUser(data.state, currentUser, currentRole)
+    ) as FullDatabaseSnapshot;
+    const merge = mergePendingOfflineSnapshot(
+      latestSnapshot,
+      queue,
+      data.stateRevision || null
+    );
+    setBackendStatus(previous => ({
+      ...previous,
+      nodeConnected: true,
+      databaseConnected: true,
+      storageMode: 'SUPABASE_LIVE',
+      statusMessage: 'The latest database records were checked. Review the unsaved changes before upload.'
+    }));
+    if (pendingOfflineSnapshotRef.current?.commitId !== queue.commitId) return;
+
+    setOfflineConflicts(merge.conflicts);
+    setOfflineSyncMessage(
+      merge.conflicts.length
+        ? 'The latest database was checked. Choose which named values to keep for each conflicting record before upload.'
+        : 'The latest database was checked. Your independent unsaved changes are ready for your approval and upload.'
+    );
+  }, [currentRole, currentUser, requireStaffSignIn]);
+
+  const queueAutosaveFailure = useCallback(async (
+    message: string,
+    blockedReason?: 'AUTH' | 'VALIDATION'
+  ): Promise<PendingOfflineSnapshot<FullDatabaseSnapshot> | null> => {
+    let queue: PendingOfflineSnapshot<FullDatabaseSnapshot>;
+    try {
+      const currentSnapshot = omitSessionArchives(getCurrentSnapshot()) as FullDatabaseSnapshot;
+      queue = await persistOfflineSnapshot(currentSnapshot, blockedReason);
+    } catch (error) {
+      const storageMessage = `${message}. The offline copy could not be stored: ${error instanceof Error ? error.message : String(error)}`;
+      setOfflineSyncMessage(storageMessage);
+      setBackendStatus(previous => ({ ...previous, isSyncing: false, statusMessage: storageMessage }));
+      return null;
+    }
+
+    if (!blockedReason) {
+      try {
+        await comparePendingOfflineSnapshotWithDatabase(queue);
+      } catch (error) {
+        setOfflineSyncMessage(
+          `${message}. Changes are preserved locally, but the latest database could not be checked yet: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    } else {
+      setOfflineSyncMessage(
+        blockedReason === 'AUTH'
+          ? `${message}. Changes are preserved locally; sign in again before uploading.`
+          : `${message}. Changes are preserved locally; correct the rejected data before uploading.`
+      );
+    }
+    return queue;
+  }, [comparePendingOfflineSnapshotWithDatabase, persistOfflineSnapshot]);
+
   // Load the server's canonical snapshot before allowing automatic writes. Without
   // this guard, the initial browser/seed state can overwrite records on refresh.
   useEffect(() => {
@@ -3981,6 +4119,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const hydrateFromBackend = async () => {
       let queuedChanges: PendingOfflineSnapshot<FullDatabaseSnapshot> | undefined;
+      let restoredAuthQueue = false;
       try {
         queuedChanges = await loadPendingOfflineSnapshot<FullDatabaseSnapshot>();
         const queuedDocuments = await loadPendingOfflineDocuments<
@@ -3999,6 +4138,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             clientId: queuedChanges.clientId,
             commitId: queuedChanges.commitId,
             actorUsername: queuedChanges.actorUsername,
+            requiresUserConfirmation: queuedChanges.requiresUserConfirmation,
+            blockedReason: queuedChanges.blockedReason,
             startedAt: queuedChanges.startedAt,
             updatedAt: queuedChanges.updatedAt
           };
@@ -4038,6 +4179,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
         if (!stateRes.ok || !stateData.ok) {
           throw new Error(stateData.error || 'Could not load persisted school records.');
+        }
+        if (queuedChanges?.blockedReason === 'AUTH') {
+          queuedChanges = { ...queuedChanges, blockedReason: undefined };
+          await savePendingOfflineSnapshot(queuedChanges);
+          pendingOfflineSnapshotRef.current = queuedChanges;
+          setPendingOfflineSnapshot(queuedChanges);
+          setOfflineSyncMessage('Staff access is restored. Review and upload your preserved changes when ready.');
+          restoredAuthQueue = true;
         }
 
         const localSnapshot = getCurrentSnapshot();
@@ -4114,11 +4263,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : statusData?.errorMessage || stateData.errorMessage || 'Supabase is unavailable; using local storage'
         }));
         if (queuedChanges) {
-          setOfflineSyncMessage(
-            persistedSnapshot
-              ? 'Showing the current database records. Pending offline changes remain queued until you review and commit them.'
-              : 'Pending offline changes were restored from this device. Review before committing them.'
-          );
+          if (!queuedChanges.blockedReason && !restoredAuthQueue) {
+            setOfflineSyncMessage(
+              persistedSnapshot
+                ? 'Showing the current database records. Pending changes remain queued until you review and upload them.'
+                : 'Pending changes were restored from this device. Review before uploading.'
+            );
+          }
         }
         setBackendHydrated(true);
       } catch (error) {
@@ -4531,12 +4682,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [currentRole]
   );
 
-  // Save directly to Supabase while available; the durable outbox is reserved for outages.
+  // Save directly when current; preserve failed autosaves for explicit review and upload.
   const syncToBackend = useCallback(async (): Promise<{
     savedToDatabase: boolean;
     savedToNodeDisk: boolean;
     message: string;
   }> => {
+    if (!isStaffLoggedIn) {
+      return {
+        savedToDatabase: false,
+        savedToNodeDisk: false,
+        message: 'Sign in before saving school records.'
+      };
+    }
     if (!backendHydrated) {
       return {
         savedToDatabase: false,
@@ -4544,18 +4702,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message: 'Database save is waiting for persisted school records to finish loading.'
       };
     }
-    if (backendConflictRef.current) {
-      return {
-        savedToDatabase: false,
-        savedToNodeDisk: false,
-        message: 'Automatic saving is paused because the database changed elsewhere. Reload the page to load the latest records before continuing.'
-      };
-    }
     const snapshot = omitSessionArchives(buildSnapshot()) as FullDatabaseSnapshot;
     if (pendingOfflineSnapshotRef.current || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       try {
         await persistOfflineSnapshot(snapshot);
-        const message = 'Pending offline changes are saved on this device. Review and commit them to the database.';
+        const message = 'Unsaved changes are preserved on this device. Review and upload them when the database is available.';
         setOfflineSyncMessage(message);
         return { savedToDatabase: false, savedToNodeDisk: false, message };
       } catch (error) {
@@ -4564,6 +4715,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setBackendStatus(previous => ({ ...previous, isSyncing: false, statusMessage: message }));
         return { savedToDatabase: false, savedToNodeDisk: false, message };
       }
+    }
+    if (backendConflictRef.current) {
+      return {
+        savedToDatabase: false,
+        savedToNodeDisk: false,
+        message: 'Automatic saving is paused. Review the preserved changes and compare them with the latest database before uploading.'
+      };
     }
     if (
       backendBaseSnapshotRef.current &&
@@ -4602,25 +4760,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const data = await res.json();
         const savedToDatabase = Boolean(data.savedToDatabase);
         const savedToNodeDisk = Boolean(data.savedToNodeDisk);
-        shouldDrainPendingSync = savedToDatabase;
-        const message = savedToDatabase
+        let message = savedToDatabase
           ? 'Synced to Supabase PostgreSQL'
           : data.errorMessage || (savedToNodeDisk
-              ? 'The database is unavailable; changes are saved locally and queued for commit'
-              : 'Persistence failed; changes have not been saved to the server');
+              ? 'Autosave did not reach Supabase; the server only saved a local copy.'
+              : 'Autosave failed; the database did not confirm these changes.');
         if (savedToDatabase) {
+          shouldDrainPendingSync = true;
           backendBaseSnapshotRef.current = snapshot;
           backendRevisionRef.current = data.stateRevision || null;
+          setBackendStatus(prev => ({
+            ...prev,
+            nodeConnected: true,
+            databaseConnected: Boolean(data.databaseConnected),
+            storageMode: data.storageMode || prev.storageMode,
+            lastSyncedAt: new Date().toLocaleTimeString(),
+            isSyncing: false,
+            statusMessage: message
+          }));
+          return {
+            savedToDatabase,
+            savedToNodeDisk,
+            message
+          };
         }
+
+        shouldDrainPendingSync = false;
         setBackendStatus(prev => ({
           ...prev,
           nodeConnected: true,
-          databaseConnected: savedToDatabase && Boolean(data.databaseConnected),
+          databaseConnected: false,
           storageMode: data.storageMode || prev.storageMode,
-          lastSyncedAt: savedToDatabase ? new Date().toLocaleTimeString() : prev.lastSyncedAt,
           isSyncing: false,
           statusMessage: message
         }));
+        const queue = await queueAutosaveFailure(message);
+        if (!queue) {
+          backendConflictRef.current = true;
+          setBackendSavePaused(true);
+          message = `${message} The browser could not store an offline copy; keep this page open.`;
+        } else {
+          message = `${message} Your changes are preserved locally and await your approval to upload.`;
+        }
+        setBackendStatus(prev => ({ ...prev, isSyncing: false, statusMessage: message }));
         return {
           savedToDatabase,
           savedToNodeDisk,
@@ -4630,7 +4812,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const data = await res.json().catch(() => null);
         const isRevisionConflict = isStateRevisionConflictResponse(res.status, data);
         if (isRevisionConflict) {
-          const message = 'Database records changed elsewhere. Automatic saving is paused; reload the page to load the latest records before continuing.';
+          const message = 'Autosave failed because the database changed after these records were loaded.';
           backendConflictRef.current = true;
           backendSyncPendingRef.current = false;
           shouldDrainPendingSync = false;
@@ -4638,9 +4820,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setBackendStatus(previous => ({
             ...previous,
             nodeConnected: true,
+            databaseConnected: true,
             isSyncing: false,
-            statusMessage: message
+            statusMessage: 'Autosave is paused. Unsaved changes are being compared with the latest database.'
           }));
+          const queue = await queueAutosaveFailure(message);
+          if (!queue) {
+            setOfflineSyncMessage(
+              `${message} The browser could not store an offline copy; keep this page open.`
+            );
+          }
           return {
             savedToDatabase: false,
             savedToNodeDisk: false,
@@ -4652,30 +4841,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           typeof navigator === 'undefined' || navigator.onLine,
           res.status
         );
-        if (shouldQueueOffline) {
-          try {
-            await persistOfflineSnapshot(snapshot);
-            shouldDrainPendingSync = true;
-          } catch (error) {
-            shouldDrainPendingSync = false;
-            setOfflineSyncMessage(
-              `${message}. Offline queue failed: ${error instanceof Error ? error.message : String(error)}`
-            );
-          }
-        } else {
-          shouldDrainPendingSync = false;
-          setOfflineSyncMessage(`${message}. This was not queued as an offline change.`);
+        const blockedReason = shouldQueueOffline
+          ? undefined
+          : res.status === 401
+            ? 'AUTH'
+            : 'VALIDATION';
+        shouldDrainPendingSync = false;
+        if (blockedReason) {
+          backendConflictRef.current = true;
+          setBackendSavePaused(true);
         }
         setBackendStatus(prev => ({
           ...prev,
           nodeConnected: true,
-          databaseConnected: shouldQueueOfflineChanges(
-            typeof navigator === 'undefined' || navigator.onLine,
-            res.status
-          ) ? false : prev.databaseConnected,
+          databaseConnected: shouldQueueOffline ? false : prev.databaseConnected,
           isSyncing: false,
           statusMessage: message
         }));
+        const queue = await queueAutosaveFailure(message, blockedReason);
+        if (!queue) {
+          backendConflictRef.current = true;
+          setBackendSavePaused(true);
+          setOfflineSyncMessage(
+            `${message}. The browser could not store an offline copy; keep this page open.`
+          );
+        }
         return {
           savedToDatabase: false,
           savedToNodeDisk: false,
@@ -4691,17 +4881,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         null,
         requestStarted ? error : undefined
       );
-      if (isOfflineFailure) {
-        try {
-          await persistOfflineSnapshot(snapshot);
-          shouldDrainPendingSync = true;
-        } catch (queueError) {
-          setOfflineSyncMessage(
-            `${message}. Offline queue failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`
-          );
-        }
-      } else {
-        setOfflineSyncMessage(`${message}. This was not queued as an offline change.`);
+      const blockedReason = isOfflineFailure ? undefined : 'VALIDATION';
+      if (blockedReason) {
+        backendConflictRef.current = true;
+        setBackendSavePaused(true);
       }
       setBackendStatus(prev => ({
         ...prev,
@@ -4710,6 +4893,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isSyncing: false,
         statusMessage: message
       }));
+      const queue = await queueAutosaveFailure(message, blockedReason);
+      if (!queue) {
+        backendConflictRef.current = true;
+        setBackendSavePaused(true);
+        setOfflineSyncMessage(
+          `${message}. The browser could not store an offline copy; keep this page open.`
+        );
+      }
       return {
         savedToDatabase: false,
         savedToNodeDisk: false,
@@ -4726,7 +4917,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
     }
-  }, [backendHydrated, buildSnapshot, persistOfflineSnapshot]);
+  }, [
+    backendHydrated,
+    buildSnapshot,
+    isStaffLoggedIn,
+    persistOfflineSnapshot,
+    queueAutosaveFailure,
+    requireStaffSignIn
+  ]);
   syncToBackendRef.current = syncToBackend;
 
   const commitOfflineChanges = useCallback(async (
@@ -4735,6 +4933,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const queue = pendingOfflineSnapshotRef.current;
     if (!queue) {
       return { ok: false, message: 'There are no pending offline changes to commit.' };
+    }
+    if (
+      queue.actorUsername &&
+      currentUser.username &&
+      queue.actorUsername.toLowerCase() !== currentUser.username.toLowerCase()
+    ) {
+      const message = `These changes were recorded by @${queue.actorUsername}. Sign in as that staff member before uploading.`;
+      setOfflineSyncMessage(message);
+      return { ok: false, message };
+    }
+    if (queue.blockedReason) {
+      const message = queue.blockedReason === 'AUTH'
+        ? 'Sign in again before uploading the preserved changes.'
+        : 'Correct the rejected records before uploading them.';
+      setOfflineSyncMessage(message);
+      return { ok: false, message };
     }
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       const message = 'Reconnect to the internet or school network before committing offline changes.';
@@ -4789,9 +5003,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           throw new Error(`The server response for "${staged.fileName}" is missing its saved file location.`);
         }
 
-        snapshotToCommit = {
-          ...snapshotToCommit,
-          teacherDocumentUploads: (snapshotToCommit.teacherDocumentUploads || []).map(document =>
+        const applyUploadedFileLocation = (snapshot: FullDatabaseSnapshot) => ({
+          ...snapshot,
+          teacherDocumentUploads: (snapshot.teacherDocumentUploads || []).map(document =>
             document.id === staged.id
               ? {
                   ...document,
@@ -4801,15 +5015,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 }
               : document
           )
-        };
+        });
+        snapshotToCommit = applyUploadedFileLocation(snapshotToCommit);
         queueToCommit = {
           ...queueToCommit,
           snapshot: snapshotToCommit,
           updatedAt: new Date().toISOString()
         };
-        await savePendingOfflineSnapshot(queueToCommit);
-        pendingOfflineSnapshotRef.current = queueToCommit;
-        setPendingOfflineSnapshot(queueToCommit);
+        const latestQueue = pendingOfflineSnapshotRef.current || queueToCommit;
+        const persistedQueue = {
+          ...latestQueue,
+          snapshot: applyUploadedFileLocation(latestQueue.snapshot),
+          updatedAt: new Date().toISOString()
+        };
+        await savePendingOfflineSnapshot(persistedQueue);
+        pendingOfflineSnapshotRef.current = persistedQueue;
+        setPendingOfflineSnapshot(persistedQueue);
+        if (latestQueue.commitId === queueToCommit.commitId) {
+          queueToCommit = persistedQueue;
+        }
       }
 
       const response = await fetchOfflineCommitWithRetry('/api/state/offline-commit', {
@@ -4843,13 +5067,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         message?: string;
       }>(response);
       if (response.status === 409 && Array.isArray(result.conflicts)) {
+        const latestQueue = pendingOfflineSnapshotRef.current || queueToCommit;
+        if (latestQueue.commitId !== queueToCommit.commitId) {
+          const message = 'Newer edits were made during upload. The latest database values are being checked against them.';
+          setOfflineSyncMessage(message);
+          try {
+            await comparePendingOfflineSnapshotWithDatabase(latestQueue);
+          } catch (error) {
+            setOfflineSyncMessage(
+              `${message} The comparison failed: ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
+          return { ok: false, message };
+        }
         setOfflineConflicts(result.conflicts);
         const message = 'Some offline changes conflict with newer database values. Choose which value to keep for each conflict.';
         setOfflineSyncMessage(message);
-        setBackendStatus(previous => ({ ...previous, isSyncing: false, statusMessage: message }));
+        setBackendStatus(previous => ({
+          ...previous,
+          databaseConnected: true,
+          isSyncing: false,
+          statusMessage: message
+        }));
         return { ok: false, message, conflicts: result.conflicts };
       }
-      if (!response.ok || !result.ok || !result.state) {
+      if (response.status === 409) {
+        const message = 'The database changed during upload. The latest values are being checked before you try again.';
+        setOfflineSyncMessage(message);
+        setBackendStatus(previous => ({
+          ...previous,
+          databaseConnected: true,
+          isSyncing: false,
+          statusMessage: message
+        }));
+        try {
+          await comparePendingOfflineSnapshotWithDatabase(
+            pendingOfflineSnapshotRef.current || queueToCommit
+          );
+        } catch (error) {
+          setOfflineSyncMessage(
+            `${message} Latest database comparison failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+        return { ok: false, message };
+      }
+      if (!response.ok && response.status >= 400 && response.status < 500) {
+        const blockedReason: 'AUTH' | 'VALIDATION' =
+          response.status === 401 ? 'AUTH' : 'VALIDATION';
+        const blockedQueue = {
+          ...(pendingOfflineSnapshotRef.current || queueToCommit),
+          requiresUserConfirmation: true,
+          blockedReason
+        };
+        await savePendingOfflineSnapshot(blockedQueue);
+        pendingOfflineSnapshotRef.current = blockedQueue;
+        setPendingOfflineSnapshot(blockedQueue);
+        const message = blockedReason === 'AUTH'
+          ? 'Database upload was rejected because staff sign-in is required. Your changes remain saved locally.'
+          : `Database upload was rejected (HTTP ${response.status}). Your changes remain saved locally; correct access or data issues before retrying.`;
+        setOfflineSyncMessage(message);
+        setBackendStatus(previous => ({ ...previous, isSyncing: false, statusMessage: message }));
+        if (blockedReason === 'AUTH') requireStaffSignIn();
+        return { ok: false, message };
+      }
+      if (!response.ok || !result.ok || !result.state || result.savedToDatabase !== true) {
         throw new Error(result.error || 'Could not commit pending changes to the database.');
       }
 
@@ -4860,13 +5141,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
       backendBaseSnapshotRef.current = committedSnapshot;
       backendRevisionRef.current = result.stateRevision || null;
+      backendConflictRef.current = false;
+      setBackendSavePaused(false);
       const clearedPendingSnapshot = await clearPendingOfflineSnapshotIfMatches(queueToCommit.commitId || '');
-      for (const staged of stagedDocuments) {
-        await removePendingOfflineDocument(staged.id);
-      }
       const remainingQueue = clearedPendingSnapshot
         ? undefined
         : await loadPendingOfflineSnapshot<FullDatabaseSnapshot>();
+      const remainingDocumentIds = new Set(
+        (remainingQueue?.snapshot.teacherDocumentUploads || []).map(document => document.id)
+      );
+      for (const staged of stagedDocuments) {
+        if (!remainingQueue || !remainingDocumentIds.has(staged.id)) {
+          await removePendingOfflineDocument(staged.id);
+        }
+      }
       if (remainingQueue) {
         const now = new Date().toISOString();
         const rebasedQueue = {
@@ -4878,7 +5166,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           ),
           clientId: remainingQueue.clientId || localClientId,
           commitId: createOfflineId(),
-          actorUsername: remainingQueue.actorUsername || currentUser.username || ''
+          actorUsername: remainingQueue.actorUsername || currentUser.username || '',
+          requiresUserConfirmation: true,
+          blockedReason: remainingQueue.blockedReason
         };
         await savePendingOfflineSnapshot(rebasedQueue);
         pendingOfflineSnapshotRef.current = rebasedQueue;
@@ -4893,10 +5183,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setPendingOfflineDocumentCount(remainingDocuments.length);
       setOfflineConflicts([]);
       const message = remainingQueue
-        ? 'Committed changes were saved to Supabase. Newer edits remain queued for a later commit.'
-        : result.savedToDatabase
-        ? 'Offline changes and queued documents were committed to Supabase and storage.'
-        : 'Offline changes were not confirmed saved to Supabase.';
+        ? 'Database upload succeeded. Newer edits remain queued and need review before autosave can resume.'
+        : 'Changes are saved in the database. Autosave has resumed.';
       setOfflineSyncMessage(message);
       setBackendStatus(previous => ({
         ...previous,
@@ -4926,7 +5214,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     backendStatus.databaseConnected,
     currentRole,
     currentUser.id,
-    currentUser.username
+    currentUser.username,
+    comparePendingOfflineSnapshotWithDatabase,
+    requireStaffSignIn
   ]);
 
   // Initialize MySQL schema & seed all relational tables

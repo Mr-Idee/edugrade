@@ -15,6 +15,8 @@ export interface PendingOfflineSnapshot<T> {
   clientId?: string;
   commitId?: string;
   actorUsername?: string;
+  requiresUserConfirmation?: boolean;
+  blockedReason?: 'AUTH' | 'VALIDATION';
   baseSnapshot: T;
   snapshot: T;
   baseRevision: string | null;
@@ -29,7 +31,7 @@ export function shouldQueueOfflineChanges(
   error?: unknown
 ): boolean {
   if (!browserOnline) return true;
-  if (status !== null) return [408, 502, 503, 504].includes(status);
+  if (status !== null) return [408, 425, 429, 500, 502, 503, 504].includes(status);
   return error instanceof TypeError;
 }
 
@@ -334,10 +336,11 @@ export function mergePendingOfflineSnapshot<T>(
         const serverTimestamp = timestampFromRecord(serverItem) || serverRevision;
         const newer = compareTimestamp(localTimestamp, serverTimestamp);
         const resolution = resolutions[changedKey];
-        if (resolution === 'LOCAL' || (resolution !== 'SERVER' && newer === 1)) {
+        const requireChoice = queue.requiresUserConfirmation === true;
+        if (resolution === 'LOCAL' || (!requireChoice && resolution !== 'SERVER' && newer === 1)) {
           if (localItem === undefined) result.delete(key);
           else result.set(key, localItem);
-        } else if (resolution === 'SERVER' || newer === -1) {
+        } else if (resolution === 'SERVER' || (!requireChoice && newer === -1)) {
           continue;
         } else {
           conflicts.push({

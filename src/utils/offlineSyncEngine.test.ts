@@ -46,6 +46,39 @@ test('offline snapshot merge selects the newer timestamp on a score conflict', (
   assert.equal(localWins.snapshot?.scores[0].score, 18);
 });
 
+test('confirmed autosave queues require a choice for same-record conflicts', () => {
+  const base = { scores: [{ id: 1, score: 12 }] };
+  const local = { scores: [{ id: 1, score: 18 }] };
+  const queue = {
+    ...createPendingOfflineSnapshot(
+      base,
+      local,
+      '2026-11-04T08:00:00.000Z',
+      '2026-11-04T08:30:00.000Z'
+    ),
+    requiresUserConfirmation: true
+  };
+  const server = { scores: [{ id: 1, score: 15 }] };
+
+  const unresolved = mergePendingOfflineSnapshot(
+    server,
+    queue,
+    '2026-11-04T08:20:00.000Z'
+  );
+  assert.equal(unresolved.snapshot, null);
+  assert.equal(unresolved.conflicts.length, 1);
+  assert.equal(unresolved.conflicts[0].key, 'scores:1');
+
+  const resolved = mergePendingOfflineSnapshot(
+    server,
+    queue,
+    '2026-11-04T08:20:00.000Z',
+    { 'scores:1': 'LOCAL' }
+  );
+  assert.equal(resolved.conflicts.length, 0);
+  assert.equal(resolved.snapshot?.scores[0].score, 18);
+});
+
 test('offline snapshot merge reports unresolved conflicts and accepts an explicit resolution', () => {
   const base = { schoolProfile: { name: 'School A' } };
   const local = { schoolProfile: { name: 'School B' } };
@@ -98,8 +131,11 @@ test('offline snapshot merge does not ask for a choice when values only differ b
 test('only offline and transient availability failures create an offline queue', () => {
   assert.equal(shouldQueueOfflineChanges(false, 500), true);
   assert.equal(shouldQueueOfflineChanges(true, 503), true);
+  assert.equal(shouldQueueOfflineChanges(true, 429), true);
   assert.equal(shouldQueueOfflineChanges(true, 409), false);
-  assert.equal(shouldQueueOfflineChanges(true, 500), false);
+  assert.equal(shouldQueueOfflineChanges(true, 400), false);
+  assert.equal(shouldQueueOfflineChanges(true, 401), false);
+  assert.equal(shouldQueueOfflineChanges(true, 403), false);
   assert.equal(shouldQueueOfflineChanges(true, null, new TypeError('Failed to fetch')), true);
   assert.equal(shouldQueueOfflineChanges(true, null, new Error('Invalid snapshot')), false);
 });

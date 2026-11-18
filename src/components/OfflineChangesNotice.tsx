@@ -61,22 +61,22 @@ function describeConflictValue(
   const record = asRecord(value);
   if (!record) return String(value);
   if (conflict.collection === 'scores') {
-    const studentName = lookups.studentsById.get(Number(record.studentId)) || `Student #${record.studentId}`;
-    const subjectName = lookups.subjectsById.get(Number(record.subjectId)) || `Subject #${record.subjectId}`;
-    const componentName = lookups.componentsById.get(Number(record.componentId)) || `Assessment #${record.componentId}`;
-    const teacherName = lookups.teachersById.get(Number(record.updatedBy)) || `User #${record.updatedBy}`;
+    const studentName = lookups.studentsById.get(Number(record.studentId)) || 'Student name unavailable';
+    const subjectName = lookups.subjectsById.get(Number(record.subjectId)) || 'Subject name unavailable';
+    const componentName = lookups.componentsById.get(Number(record.componentId)) || 'Assessment item';
+    const teacherName = lookups.teachersById.get(Number(record.updatedBy)) || 'Staff member';
     return `${studentName} · ${subjectName} · ${componentName}: ${formatScore(record.score)} · entered by ${teacherName}`;
   }
   if (conflict.collection === 'termSubjectRecords') {
-    const studentName = lookups.studentsById.get(Number(record.studentId)) || `Student #${record.studentId}`;
-    const subjectName = lookups.subjectsById.get(Number(record.subjectId)) || `Subject #${record.subjectId}`;
+    const studentName = lookups.studentsById.get(Number(record.studentId)) || 'Student name unavailable';
+    const subjectName = lookups.subjectsById.get(Number(record.subjectId)) || 'Subject name unavailable';
     return `${studentName} · ${subjectName}: CA1 ${formatScore(record.ca1Score)}, CA2 ${formatScore(record.ca2Score)}, Exam ${formatScore(record.examScore)}, Total ${formatScore(record.totalScore)}`;
   }
   if (conflict.collection === 'customReportTemplates') {
     const template = lookups.templatesById.get(String(record.id));
     return `${template?.title || 'Custom report sheet'} settings or score records changed`;
   }
-  const usefulFields = ['fullName', 'name', 'title', 'score', 'isIncluded', 'currentSectionId']
+  const usefulFields = ['fullName', 'name', 'title', 'score', 'isIncluded']
     .filter(key => record[key] !== undefined)
     .map(key => `${describeCollection(key)}: ${String(record[key])}`);
   return usefulFields.length ? usefulFields.join(' · ') : `${describeCollection(conflict.collection)} record changed`;
@@ -91,6 +91,7 @@ export const OfflineChangesNotice: React.FC = () => {
     offlineSyncMessage,
     backendStatus,
     commitOfflineChanges,
+    openAuthModal,
     currentUser,
     teachers,
     students,
@@ -104,7 +105,15 @@ export const OfflineChangesNotice: React.FC = () => {
   const [autoCommitMessage, setAutoCommitMessage] = useState<string | null>(null);
   const autoAttemptedAt = React.useRef<string | null>(null);
   const hasPendingChanges = Boolean(pendingOfflineSnapshot);
-  const canCommit = isOnline && backendStatus.databaseConnected;
+  const queueOwnerMismatch = Boolean(
+    pendingOfflineSnapshot?.actorUsername &&
+    currentUser.username &&
+    pendingOfflineSnapshot.actorUsername.toLowerCase() !== currentUser.username.toLowerCase()
+  );
+  const canCommit = isOnline &&
+    backendStatus.databaseConnected &&
+    !pendingOfflineSnapshot?.blockedReason &&
+    !queueOwnerMismatch;
 
   const changeEntries = useMemo(
     () => Object.entries(pendingOfflineSnapshot?.changedAt || {}),
@@ -139,7 +148,7 @@ export const OfflineChangesNotice: React.FC = () => {
       if (!group) {
         group = {
           studentId,
-          studentName: lookups.studentsById.get(studentId) || `Student #${studentId}`,
+          studentName: lookups.studentsById.get(studentId) || 'Student name unavailable',
           subjects: new Map()
         };
         groups.set(studentId, group);
@@ -147,14 +156,14 @@ export const OfflineChangesNotice: React.FC = () => {
       let subject = group.subjects.get(subjectId);
       if (!subject) {
         subject = {
-          subjectName: lookups.subjectsById.get(subjectId) || `Subject #${subjectId}`,
+          subjectName: lookups.subjectsById.get(subjectId) || 'Subject name unavailable',
           entries: []
         };
         group.subjects.set(subjectId, subject);
       }
       const actor = actorId === undefined
         ? ''
-        : ` · recorded by ${lookups.teachersById.get(actorId) || (actorId === currentUser.id ? currentUser.fullName : `User #${actorId}`)}`;
+        : ` · recorded by ${lookups.teachersById.get(actorId) || (actorId === currentUser.id ? currentUser.fullName : 'Staff member')}`;
       subject.entries.push(`${entry}${actor}`);
     };
 
@@ -209,7 +218,7 @@ export const OfflineChangesNotice: React.FC = () => {
           const localColumns = asRecord(localScores[scoreKey]) || {};
           for (const columnId of new Set([...Object.keys(baseColumns), ...Object.keys(localColumns)])) {
             if (areOfflineValuesEqual(baseColumns[columnId], localColumns[columnId])) continue;
-            const columnName = columns?.get(columnId) || columnId;
+            const columnName = columns?.get(columnId) || 'Custom field';
             addStudentChange(
               studentId,
               subjectId,
@@ -226,9 +235,9 @@ export const OfflineChangesNotice: React.FC = () => {
         continue;
       }
       const entityName = record
-        ? String(record.fullName || record.name || record.title || record.admissionNumber || `Record ${recordId}`)
+        ? String(record.fullName || record.name || record.title || record.admissionNumber || 'Unnamed record')
         : localRecord
-          ? `Record ${recordId}`
+          ? 'Record details unavailable'
           : 'Record removed';
       other.push(`${describeCollection(collection)} · ${entityName}`);
     }
@@ -243,12 +252,12 @@ export const OfflineChangesNotice: React.FC = () => {
     if (!hasPendingChanges) {
       setIsOpen(false);
       setResolutions({});
-      setAutoCommitMessage(null);
       autoAttemptedAt.current = null;
       return;
     }
-    if (offlineConflicts.length) setIsOpen(true);
-  }, [hasPendingChanges, offlineConflicts]);
+    setAutoCommitMessage(null);
+    if (pendingOfflineSnapshot?.requiresUserConfirmation || offlineConflicts.length) setIsOpen(true);
+  }, [hasPendingChanges, offlineConflicts, pendingOfflineSnapshot?.requiresUserConfirmation]);
 
   const handleCommit = useCallback(async () => {
     setIsCommitting(true);
@@ -259,6 +268,7 @@ export const OfflineChangesNotice: React.FC = () => {
         setIsOpen(false);
         setAutoCommitMessage(result.message);
       } else if (result.conflicts?.length) {
+        setResolutions({});
         setIsOpen(true);
         setAutoCommitMessage(null);
       } else {
@@ -276,11 +286,19 @@ export const OfflineChangesNotice: React.FC = () => {
       !canCommit ||
       isCommitting ||
       offlineConflicts.length ||
+      pendingOfflineSnapshot?.requiresUserConfirmation ||
       autoAttemptedAt.current === updatedAt
     ) return;
     autoAttemptedAt.current = updatedAt;
     void handleCommit();
-  }, [canCommit, handleCommit, isCommitting, offlineConflicts.length, pendingOfflineSnapshot?.updatedAt]);
+  }, [
+    canCommit,
+    handleCommit,
+    isCommitting,
+    offlineConflicts.length,
+    pendingOfflineSnapshot?.requiresUserConfirmation,
+    pendingOfflineSnapshot?.updatedAt
+  ]);
 
   if (!pendingOfflineSnapshot) {
     return autoCommitMessage
@@ -288,7 +306,19 @@ export const OfflineChangesNotice: React.FC = () => {
       : null;
   }
 
+  if (queueOwnerMismatch) {
+    return (
+      <div
+        role="status"
+        className="fixed bottom-4 right-[calc(5rem_+_env(safe-area-inset-right))] z-[105] max-w-[calc(100vw_-_6.5rem)] rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-950 shadow-xl sm:max-w-sm"
+      >
+        Unsaved changes from another staff account remain on this device. Sign in as the account that recorded them to review or upload.
+      </div>
+    );
+  }
+
   const allConflictsResolved = offlineConflicts.every(conflict => resolutions[conflict.key]);
+  const blockedReason = pendingOfflineSnapshot.blockedReason;
   const queuedActor = teachers.find(
     teacher => teacher.username?.toLowerCase() === pendingOfflineSnapshot.actorUsername?.toLowerCase()
   )?.fullName || (
@@ -339,12 +369,30 @@ export const OfflineChangesNotice: React.FC = () => {
                 </div>
                 <div>
                   <h2 id="offline-changes-title" className="text-lg font-black">
-                    {canCommit ? 'Review offline changes' : 'Offline changes are saved locally'}
+                    {blockedReason === 'AUTH'
+                      ? 'Autosave failed — sign-in required'
+                      : blockedReason === 'VALIDATION'
+                        ? 'Autosave failed — review rejected records'
+                        : queueOwnerMismatch
+                          ? 'Sign in as the staff member who made these changes'
+                        : pendingOfflineSnapshot.requiresUserConfirmation
+                          ? 'Autosave failed — review unsaved changes'
+                          : canCommit
+                            ? 'Review offline changes'
+                            : 'Offline changes are saved locally'}
                   </h2>
                   <p className="mt-1 text-xs text-slate-300">
-                    {canCommit
-                      ? 'Matching values sync automatically. You only need to choose when offline and database values are genuinely different.'
-                      : 'Your entries are stored on this device. The app will offer them for database commit after Supabase availability is confirmed.'}
+                    {blockedReason === 'AUTH'
+                      ? 'Your changes are stored on this device. Sign in again before uploading them.'
+                      : blockedReason === 'VALIDATION'
+                        ? 'Your changes are stored on this device. Correct the rejected data before uploading.'
+                        : queueOwnerMismatch
+                          ? 'These changes remain stored on this device and can only be uploaded by the staff account that recorded them.'
+                        : pendingOfflineSnapshot.requiresUserConfirmation
+                          ? 'Your changes were not autosaved. Review the named records and explicitly upload them after the latest database state is checked.'
+                          : canCommit
+                            ? 'Matching values sync automatically. Choose only when offline and database values are genuinely different.'
+                            : 'Your entries are stored on this device. The app will offer them for database commit after Supabase availability is confirmed.'}
                   </p>
                 </div>
               </div>
@@ -396,7 +444,7 @@ export const OfflineChangesNotice: React.FC = () => {
 
               <div className="space-y-2">
                 <h3 className="text-xs font-black uppercase tracking-wide text-slate-600">
-                  Offline changes grouped by student ({groupedChanges.students.length})
+                  Unsaved changes grouped by student ({groupedChanges.students.length})
                 </h3>
                 {groupedChanges.students.length === 0 && groupedChanges.other.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-500">
@@ -407,7 +455,7 @@ export const OfflineChangesNotice: React.FC = () => {
                     {groupedChanges.students.map(student => (
                       <article key={student.studentId} className="rounded-xl border border-slate-200 p-3">
                         <h4 className="text-xs font-black text-slate-900">
-                          {student.studentName} <span className="font-normal text-slate-500">· Student ID {student.studentId}</span>
+                          {student.studentName}
                         </h4>
                         <div className="mt-2 space-y-2">
                           {[...student.subjects.entries()].map(([subjectId, subject]) => (
@@ -499,14 +547,29 @@ export const OfflineChangesNotice: React.FC = () => {
                 >
                   Review later
                 </button>
+                {blockedReason === 'AUTH' && (
+                  <button
+                    type="button"
+                    onClick={() => openAuthModal()}
+                    className="rounded-lg bg-amber-700 px-4 py-2 text-xs font-black text-white"
+                  >
+                    Sign in to upload
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleCommit()}
-                  disabled={!canCommit || isCommitting || !allConflictsResolved}
+                  disabled={!canCommit || isCommitting || !allConflictsResolved || Boolean(blockedReason)}
                   className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isCommitting ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-                  {isCommitting ? 'Committing…' : 'Confirm and commit changes'}
+                  {isCommitting
+                    ? 'Uploading…'
+                    : blockedReason === 'VALIDATION'
+                      ? 'Correct rejected data to continue'
+                    : pendingOfflineSnapshot.requiresUserConfirmation
+                      ? 'Upload unsaved changes'
+                      : 'Confirm and commit changes'}
                 </button>
               </footer>
             </div>
