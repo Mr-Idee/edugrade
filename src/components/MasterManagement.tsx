@@ -498,7 +498,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
   const [staffRoleNotice, setStaffRoleNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [staffRoleDrafts, setStaffRoleDrafts] = useState<Record<number, UserRole>>({});
   const [savingStaffRoleId, setSavingStaffRoleId] = useState<number | null>(null);
-  const [tutorAssignedNotice, setTutorAssignedNotice] = useState<string | null>(null);
+  const [staffActionNotice, setStaffActionNotice] = useState<{ ok: boolean; message: string } | null>(null);
   const [editingTeacherId, setEditingTeacherId] = useState<number | null>(null);
   const [editingTeacherName, setEditingTeacherName] = useState('');
   const [editingTeacherUsername, setEditingTeacherUsername] = useState('');
@@ -636,12 +636,12 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
         return;
       }
 
-      setTutorAssignedNotice(result.message);
+      setStaffActionNotice({ ok: true, message: result.message });
       setEditingTeacherId(null);
       setEditingTeacherPassword('');
       setPendingTeacherCredentialSave(null);
       setCredentialActorInput('');
-      setTimeout(() => setTutorAssignedNotice(null), 5000);
+      setTimeout(() => setStaffActionNotice(null), 5000);
     } finally {
       setIsSavingTeacherCredentials(false);
     }
@@ -764,6 +764,14 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
   const handleAssignClassTutor = (sectionId: number, teacherValue: string) => {
     const matchedTeacher = teachers.find(t => t.fullName === teacherValue);
     const sec = classSections.find(s => s.id === sectionId);
+    if (!matchedTeacher || !sec) {
+      setStaffActionNotice({
+        ok: false,
+        message: 'Could not assign the form tutor. Verify the selected class and staff member.'
+      });
+      setTimeout(() => setStaffActionNotice(null), 4000);
+      return;
+    }
     const currentTutor = sec?.classTeacherName || '';
 
     // If this class is already assigned to another teacher, trigger the Reassignment Confirmation Modal
@@ -785,14 +793,21 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
 
     assignFormTutor(sectionId, teacherValue, matchedTeacher?.id);
     const secName = sec?.name || 'Class';
-    setTutorAssignedNotice(`Assigned ${teacherValue} as Form Tutor for ${secName}`);
-    setTimeout(() => setTutorAssignedNotice(null), 3500);
+    setStaffActionNotice({ ok: true, message: `Assigned ${teacherValue} as Form Tutor for ${secName}` });
+    setTimeout(() => setStaffActionNotice(null), 3500);
   };
 
   const handleRequestSubjectAssignment = (e: React.FormEvent) => {
     e.preventDefault();
     const targetTeacher = teachers.find(t => t.id === Number(assignSubjTeacherId));
-    if (!targetTeacher) return;
+    if (!targetTeacher) {
+      setStaffActionNotice({
+        ok: false,
+        message: 'Could not assign the subject. Select a valid staff member.'
+      });
+      setTimeout(() => setStaffActionNotice(null), 4000);
+      return;
+    }
 
     const existingHolder = getAssignedTeacherForSubject(
       Number(assignSubjSectionId),
@@ -817,14 +832,17 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
       targetTeacher.id
     );
     if (!assigned) {
-      setTutorAssignedNotice('That subject is not applicable to the selected class level.');
-      setTimeout(() => setTutorAssignedNotice(null), 4000);
+      setStaffActionNotice({
+        ok: false,
+        message: 'Could not assign the subject. Verify that it is applicable to the selected class.'
+      });
+      setTimeout(() => setStaffActionNotice(null), 4000);
       return;
     }
     const secName = classSections.find(s => s.id === Number(assignSubjSectionId))?.name || 'Class';
     const subName = subjects.find(s => s.id === Number(assignSubjSubjectId))?.name || 'Subject';
-    setTutorAssignedNotice(`Assigned ${subName} (${secName}) to ${targetTeacher.fullName}`);
-    setTimeout(() => setTutorAssignedNotice(null), 4000);
+    setStaffActionNotice({ ok: true, message: `Assigned ${subName} (${secName}) to ${targetTeacher.fullName}` });
+    setTimeout(() => setStaffActionNotice(null), 4000);
   };
 
   const handleConfirmReassignment = () => {
@@ -837,9 +855,10 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
         pendingReassignment.newTeacherName,
         pendingReassignment.newTeacherId
       );
-      setTutorAssignedNotice(
-        `Reassigned Form Tutor for ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`
-      );
+      setStaffActionNotice({
+        ok: true,
+        message: `Reassigned Form Tutor for ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`
+      });
     } else if (pendingReassignment.type === 'SUBJECT_TEACHER' && pendingReassignment.subjectId) {
       const assigned = assignSubjectToTeacher(
         pendingReassignment.sectionId,
@@ -848,18 +867,22 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
       );
       if (!assigned) {
         setPendingReassignment(null);
-        setTutorAssignedNotice('That subject is not applicable to the selected class level.');
-        setTimeout(() => setTutorAssignedNotice(null), 4000);
+        setStaffActionNotice({
+          ok: false,
+          message: 'Could not assign the subject. Verify that it is applicable to the selected class.'
+        });
+        setTimeout(() => setStaffActionNotice(null), 4000);
         return;
       }
       const subName = subjects.find(s => s.id === pendingReassignment.subjectId)?.name || 'Subject';
-      setTutorAssignedNotice(
-        `Reassigned ${subName} in ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`
-      );
+      setStaffActionNotice({
+        ok: true,
+        message: `Reassigned ${subName} in ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`
+      });
     }
 
     setPendingReassignment(null);
-    setTimeout(() => setTutorAssignedNotice(null), 4500);
+    setTimeout(() => setStaffActionNotice(null), 4500);
   };
 
   // Handle saving School Profile
@@ -1643,9 +1666,14 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                 <span className="font-bold underline">Form Tutor Signature</span> field on every student&apos;s report sheet in that class.
               </div>
             </div>
-            {tutorAssignedNotice && (
-              <span className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold shrink-0 shadow-xs">
-                ✓ {tutorAssignedNotice}
+            {staffActionNotice && (
+              <span
+                role={staffActionNotice.ok ? 'status' : 'alert'}
+                className={`px-3 py-1.5 rounded-xl text-white font-bold shrink-0 shadow-xs ${
+                  staffActionNotice.ok ? 'bg-emerald-600' : 'bg-rose-600'
+                }`}
+              >
+                {staffActionNotice.ok ? '✓ Success:' : '✕ Failed:'} {staffActionNotice.message}
               </span>
             )}
           </div>
@@ -2184,11 +2212,25 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                     </span>
                                   );
                                 })}
-                                {(t.assignedSubjects || []).length > 6 && (
-                                  <span className="text-[10px] font-mono text-indigo-600 font-bold">
-                                    +{(t.assignedSubjects || []).length - 6} more
-                                  </span>
-                                )}
+                                {(t.assignedSubjects || []).length > 6 && (() => {
+                                  const remainingAssignments = (t.assignedSubjects || []).slice(6);
+                                  const remainingSubjects = remainingAssignments.map(asg => {
+                                    const secName = classSections.find(c => c.id === asg.sectionId)?.name || `Class #${asg.sectionId}`;
+                                    const subName = subjects.find(s => s.id === asg.subjectId)?.name || `Subject #${asg.subjectId}`;
+                                    return `${subName} (${secName})`;
+                                  });
+                                  return (
+                                    <span
+                                      data-testid={`teacher-more-subjects-${t.id}`}
+                                      tabIndex={0}
+                                      title={remainingSubjects.join('\n')}
+                                      aria-label={`Remaining assigned subjects: ${remainingSubjects.join(', ')}`}
+                                      className="text-[10px] font-mono text-indigo-600 font-bold cursor-help"
+                                    >
+                                      +{remainingAssignments.length} more
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </div>
 
@@ -2259,8 +2301,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                   data-testid={`approve-reset-btn-${t.id}`}
                                   onClick={async () => {
                                     const res = await approveTeacherPasswordReset(t.id);
-                                    setTutorAssignedNotice(res.message);
-                                    setTimeout(() => setTutorAssignedNotice(null), 4500);
+                                    setStaffActionNotice({ ok: res.ok, message: res.message });
+                                    setTimeout(() => setStaffActionNotice(null), 4500);
                                   }}
                                   className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 cursor-pointer transition-colors ${
                                     resetRequested
