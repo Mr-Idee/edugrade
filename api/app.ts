@@ -28,7 +28,10 @@ import {
   preserveStudentCommentsForSubjectTeacher,
   preserveTeacherRemarksForSuperAdmin
 } from '../src/utils/studentCommentPolicy.ts';
-import { canAssignStaffRole } from '../src/utils/staffRolePolicy.ts';
+import {
+  canAssignStaffRole,
+  findNewInvalidTeacherSubjectAssignments
+} from '../src/utils/staffRolePolicy.ts';
 import {
   isDocumentInHodScope,
   mergeDocumentReviewUpdate,
@@ -936,6 +939,18 @@ async function saveState(
     ? stateSnapshotCache.get(expectedRevision)
     : undefined;
   const currentState = cachedState || await loadCachedState();
+  const assignmentIssues = findNewInvalidTeacherSubjectAssignments(
+    currentState?.state_json,
+    snapshot
+  );
+  if (assignmentIssues.length > 0) {
+    const issue = assignmentIssues[0];
+    const error = new Error(
+      `Cannot assign subject ${issue.subjectId} to class ${issue.sectionId}: ${issue.reason}.`
+    );
+    Object.assign(error, { status: 400 });
+    throw error;
+  }
   const scoreOnlyChange = Boolean(
     currentState && areNonScoreSnapshotValuesEqual(currentState.state_json, snapshot)
   );

@@ -811,11 +811,16 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
       return;
     }
 
-    assignSubjectToTeacher(
+    const assigned = assignSubjectToTeacher(
       Number(assignSubjSectionId),
       Number(assignSubjSubjectId),
       targetTeacher.id
     );
+    if (!assigned) {
+      setTutorAssignedNotice('That subject is not applicable to the selected class level.');
+      setTimeout(() => setTutorAssignedNotice(null), 4000);
+      return;
+    }
     const secName = classSections.find(s => s.id === Number(assignSubjSectionId))?.name || 'Class';
     const subName = subjects.find(s => s.id === Number(assignSubjSubjectId))?.name || 'Subject';
     setTutorAssignedNotice(`Assigned ${subName} (${secName}) to ${targetTeacher.fullName}`);
@@ -836,11 +841,17 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
         `Reassigned Form Tutor for ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`
       );
     } else if (pendingReassignment.type === 'SUBJECT_TEACHER' && pendingReassignment.subjectId) {
-      assignSubjectToTeacher(
+      const assigned = assignSubjectToTeacher(
         pendingReassignment.sectionId,
         pendingReassignment.subjectId,
         pendingReassignment.newTeacherId
       );
+      if (!assigned) {
+        setPendingReassignment(null);
+        setTutorAssignedNotice('That subject is not applicable to the selected class level.');
+        setTimeout(() => setTutorAssignedNotice(null), 4000);
+        return;
+      }
       const subName = subjects.find(s => s.id === pendingReassignment.subjectId)?.name || 'Subject';
       setTutorAssignedNotice(
         `Reassigned ${subName} in ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`

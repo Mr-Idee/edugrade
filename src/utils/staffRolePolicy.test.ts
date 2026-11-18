@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   getStaffVisibleToUser,
   findTeacherForUser,
+  findNewInvalidTeacherSubjectAssignments,
+  isSubjectApplicableToSection,
   resolveTeacherScoreSelection
 } from './staffRolePolicy';
 import type { ClassSection, Subject, TeacherSubjectAssignment } from '../types/index';
@@ -87,4 +89,43 @@ test('score selection preserves a valid current assignment and rejects invalid c
     resolveTeacherScoreSelection([{ sectionId: 9, subjectId: 16 }], sections, subjects, 9, 16),
     undefined
   );
+});
+
+test('subject assignment validation rejects new level mismatches but tolerates unchanged legacy data', () => {
+  const previous = {
+    teachers: [{ id: 7, assignedSubjects: [] as TeacherSubjectAssignment[] }],
+    classSections: [{ id: 1, levelType: 'JUNIOR' as const }],
+    subjects: [
+      { id: 5, applicableLevel: 'SENIOR' as const },
+      { id: 31, applicableLevel: 'JUNIOR' as const }
+    ]
+  };
+  const invalidNext = {
+    ...previous,
+    teachers: [{ id: 7, assignedSubjects: [{ sectionId: 1, subjectId: 5 }] }]
+  };
+  const validNext = {
+    ...previous,
+    teachers: [{ id: 7, assignedSubjects: [{ sectionId: 1, subjectId: 31 }] }]
+  };
+
+  assert.deepEqual(
+    findNewInvalidTeacherSubjectAssignments(previous, invalidNext),
+    [{ teacherId: 7, sectionId: 1, subjectId: 5, reason: 'level-mismatch' }]
+  );
+  assert.deepEqual(findNewInvalidTeacherSubjectAssignments(previous, validNext), []);
+  assert.deepEqual(
+    findNewInvalidTeacherSubjectAssignments(invalidNext, invalidNext),
+    []
+  );
+});
+
+test('subject applicability includes BOTH and rejects cross-level assignments', () => {
+  const junior = { levelType: 'JUNIOR' as const };
+  const senior = { levelType: 'SENIOR' as const };
+
+  assert.equal(isSubjectApplicableToSection({ applicableLevel: 'BOTH' }, junior), true);
+  assert.equal(isSubjectApplicableToSection({ applicableLevel: 'JUNIOR' }, junior), true);
+  assert.equal(isSubjectApplicableToSection({ applicableLevel: 'SENIOR' }, junior), false);
+  assert.equal(isSubjectApplicableToSection({ applicableLevel: 'SENIOR' }, senior), true);
 });

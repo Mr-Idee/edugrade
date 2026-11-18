@@ -101,6 +101,7 @@ import {
 import {
   findTeacherForUser,
   getStaffVisibleToUser,
+  isSubjectApplicableToSection,
   resolveTeacherScoreSelection
 } from '../utils/staffRolePolicy';
 import { canAccessStudentComments } from '../utils/studentCommentPolicy';
@@ -216,7 +217,7 @@ interface AppContextType {
   }) => Promise<{ ok: boolean; message: string }>;
   deleteTeacher: (id: number) => void;
   assignFormTutor: (sectionId: number, teacherName: string, teacherId?: number) => void;
-  assignSubjectToTeacher: (sectionId: number, subjectId: number, teacherId: number) => void;
+  assignSubjectToTeacher: (sectionId: number, subjectId: number, teacherId: number) => boolean;
   removeSubjectFromTeacher: (sectionId: number, subjectId: number, teacherId: number) => void;
   getAssignedTeacherForSubject: (sectionId: number, subjectId: number) => Teacher | undefined;
   completeTeacherPasswordSetup: (username: string, newPassword: string, initialPin: string) => Promise<{ ok: boolean; message: string }>;
@@ -2090,6 +2091,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Assign a subject in a class section to a teacher (removing it from any previously assigned teacher)
   const assignSubjectToTeacher = useCallback((sectionId: number, subjectId: number, teacherId: number) => {
+    const section = classSections.find(item => Number(item.id) === Number(sectionId));
+    const subject = subjects.find(item => Number(item.id) === Number(subjectId));
+    if (!section || !subject || !isSubjectApplicableToSection(subject, section)) return false;
+
     setTeachers(prev => {
       const next = prev.map(t => {
         const filtered = (t.assignedSubjects || []).filter(
@@ -2119,7 +2124,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return next;
     });
     setLastAutoSavedTime(new Date().toLocaleTimeString());
-  }, []);
+    return true;
+  }, [classSections, subjects]);
 
   const removeSubjectFromTeacher = useCallback((sectionId: number, subjectId: number, teacherId: number) => {
     setTeachers(prev => {
