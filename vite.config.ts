@@ -36,6 +36,21 @@ export default defineConfig(({ command, mode }) => {
       'import.meta.env.SUPABASE_URL': JSON.stringify(env.SUPABASE_URL || ''),
       'import.meta.env.SUPABASE_PUBLISHABLE_KEY': JSON.stringify(env.SUPABASE_PUBLISHABLE_KEY || '')
     },
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'initial-app',
+                tags: ['$initial'],
+                maxSize: 450 * 1024
+              }
+            ]
+          }
+        }
+      }
+    },
     plugins: [
       react({ jsxRuntime: 'classic' }),
       tailwindcss(),
