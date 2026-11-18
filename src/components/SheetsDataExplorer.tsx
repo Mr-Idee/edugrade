@@ -21,6 +21,19 @@ import {
   determineGrade,
   getTermStructureForLevel
 } from '../utils/academicCalculations';
+import { hasAllSubjectsClearance } from '../utils/rbacAndAuth';
+import {
+  findTeacherForUser,
+  hasTeacherSubjectAssignment
+} from '../utils/staffRolePolicy';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject,
+  RELIGIOUS_STUDIES_SUBJECT_ID,
+  withStudentReligiousStudiesChoice
+} from '../utils/subjectDisplay';
+import type { ReligiousStudiesChoice } from '../types';
 
 interface SheetsDataExplorerProps {
   onOpenClass: (sectionId: number) => void;
@@ -45,7 +58,11 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
     setCurrentTerm,
     terms,
     currentSession,
-    toggleSubjectInclusion
+    toggleSubjectInclusion,
+    currentRole,
+    currentUser,
+    teachers,
+    updateStudent
   } = useApp();
 
   const [selectedSheetIndex, setSelectedSheetIndex] = useState(0);
@@ -113,6 +130,44 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
     );
   }, [selectedStudentName, sectionStudents, students]);
 
+  const activeReligiousStudiesChoice = getStudentReligiousStudiesChoice(
+    activeStudentObj,
+    currentSession.id
+  );
+  const activeTeacher = findTeacherForUser(teachers, currentUser);
+  const formTutorSectionId = Number(
+    activeTeacher?.assignedSectionId ?? currentUser.assignedSectionId
+  );
+  const canManageReligiousStudiesChoice =
+    hasAllSubjectsClearance(currentRole) ||
+    (currentRole === 'CLASS_TEACHER' &&
+      Number.isSafeInteger(formTutorSectionId) &&
+      formTutorSectionId === Number(matchedSection?.id));
+  const canViewReligiousStudiesChoice = (
+    sectionId: number,
+    choice: ReligiousStudiesChoice | undefined
+  ) => Boolean(
+    choice &&
+    (hasAllSubjectsClearance(currentRole) ||
+      hasTeacherSubjectAssignment(
+        activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+        sectionId,
+        RELIGIOUS_STUDIES_SUBJECT_ID,
+        choice
+      ))
+  );
+
+  const setReligiousStudiesChoice = (choice: ReligiousStudiesChoice | undefined) => {
+    if (!activeStudentObj || !canManageReligiousStudiesChoice) return;
+    updateStudent(activeStudentObj.id, {
+      religiousStudiesChoiceBySession: withStudentReligiousStudiesChoice(
+        activeStudentObj,
+        currentSession.id,
+        choice
+      )
+    });
+  };
+
   // Applicable curriculum subjects for this class level
   const applicableSubjects = useMemo(() => {
     return subjects.filter(
@@ -144,11 +199,27 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
           e.subjectId === sub.id &&
           e.sectionId === activeStudentObj.currentSectionId
       );
-      const sheetFallback = currentSheet.scores.find(
-        s => s.subject.trim().toUpperCase() === sub.name.trim().toUpperCase()
+      const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+        activeStudentObj,
+        currentSession.id
+      );
+      const displayName = getSubjectDisplayName(
+        sub,
+        activeStudentObj.currentSectionId,
+        isReligiousStudiesSubject(sub) ? religiousStudiesChoice : undefined
+      );
+      const sheetFallback = currentSheet.scores.find(s =>
+        [sub.name, displayName].some(
+          name => s.subject.trim().toUpperCase() === name.trim().toUpperCase()
+        )
       );
 
-      const isIncluded = isSenior
+      const isIncluded = isReligiousStudiesSubject(sub)
+        ? canViewReligiousStudiesChoice(
+            activeStudentObj.currentSectionId,
+            religiousStudiesChoice
+          )
+        : isSenior
         ? enr
           ? enr.isIncluded
           : sheetFallback
@@ -220,7 +291,7 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
 
       return {
         subjectId: sub.id,
-        subject: sub.name,
+        subject: displayName,
         isIncluded,
         ca1Score,
         ca2Score,
@@ -241,6 +312,10 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
     scores,
     termSubjectRecords,
     currentTerm.id,
+    currentSession.id,
+    currentRole,
+    activeTeacher,
+    currentUser,
     termStructure,
     maxCaTotal
   ]);
@@ -265,7 +340,14 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
             e.subjectId === sub.id &&
             e.sectionId === st.currentSectionId
         );
-        const inc = isSenior ? (enr ? enr.isIncluded : sub.category === 'CORE') : true;
+        const inc = isReligiousStudiesSubject(sub)
+          ? canViewReligiousStudiesChoice(
+              st.currentSectionId,
+              getStudentReligiousStudiesChoice(st, currentSession.id)
+            )
+          : isSenior
+          ? (enr ? enr.isIncluded : sub.category === 'CORE')
+          : true;
         if (!inc) return;
         count++;
         const rec = termSubjectRecords.find(
@@ -313,7 +395,11 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
     enrollments,
     isSenior,
     termSubjectRecords,
-    currentTerm.id
+    currentTerm.id,
+    currentSession.id,
+    currentRole,
+    activeTeacher,
+    currentUser
   ]);
 
   // Compute live summary metrics for the selected student in the ACTIVE TERM
@@ -686,6 +772,34 @@ export const SheetsDataExplorer: React.FC<SheetsDataExplorerProps> = ({
               <div className="mt-1 break-words text-[clamp(1.25rem,4vw,2.25rem)] font-black leading-tight text-slate-900">
                 {activeStudentSummary.name}
               </div>
+              {!isSenior && canManageReligiousStudiesChoice && activeStudentObj && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label
+                    htmlFor="matrix-religious-studies-choice"
+                    className="text-[11px] font-bold text-indigo-900"
+                  >
+                    Religious Studies for {currentSession.name}
+                  </label>
+                  <select
+                    id="matrix-religious-studies-choice"
+                    data-testid="matrix-religious-studies-choice"
+                    value={activeReligiousStudiesChoice || ''}
+                    onChange={event => {
+                      const choice = event.target.value;
+                      if (choice === 'CRS' || choice === 'IRS') {
+                        setReligiousStudiesChoice(choice);
+                      } else if (choice === '') {
+                        setReligiousStudiesChoice(undefined);
+                      }
+                    }}
+                    className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-900"
+                  >
+                    <option value="">Not selected</option>
+                    <option value="CRS">Christian Religious Studies (CRS)</option>
+                    <option value="IRS">Islamic Religious Studies (IRS)</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 text-xs">

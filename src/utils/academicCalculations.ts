@@ -11,6 +11,11 @@ import {
   GradingScaleBand,
   GradingScalePreset
 } from '../types/index';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from './subjectDisplay';
 
 export const SENIOR_GRADING_SCALES: GradingScale[] = [
   { id: 1, levelType: 'SENIOR', grade: 'A', minScore: 85.0, maxScore: 100.0, description: 'Excellent', gpaPoint: 4.0, colorClass: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
@@ -436,13 +441,25 @@ export interface StudentCompletenessAuditRow {
  * Lists each student, the number of subjects included, and the specific subjects with missing grades/components.
  */
 export function auditClassStudentCompleteness(params: {
-  students: Array<{ id: number; admissionNumber: string; fullName: string; gender: 'MALE' | 'FEMALE' }>;
+  students: Array<{
+    id: number;
+    admissionNumber: string;
+    fullName: string;
+    gender: 'MALE' | 'FEMALE';
+    religiousStudiesChoiceBySession?: Record<string, 'CRS' | 'IRS'>;
+  }>;
   levelType: LevelType;
-  applicableSubjects: Array<{ id: number; name: string; code: string }>;
+  applicableSubjects: Array<{
+    id: number;
+    name: string;
+    code: string;
+    sectionNameOverrides?: Record<string, string>;
+  }>;
   components: Array<{ id: number; shortCode: string; name: string; maxScore: number }>;
   enrollments: Array<{ studentId: number; subjectId: number; sectionId: number; isIncluded: boolean }>;
   scores: Array<{ studentId: number; subjectId: number; componentId: number; score: number | null }>;
   sectionId: number;
+  sessionId?: number;
 }): StudentCompletenessAuditRow[] {
   const {
     students,
@@ -451,7 +468,8 @@ export function auditClassStudentCompleteness(params: {
     components,
     enrollments,
     scores,
-    sectionId
+    sectionId,
+    sessionId
   } = params;
 
   const maxSubjectScore = components.reduce((acc, c) => acc + c.maxScore, 0);
@@ -465,11 +483,23 @@ export function auditClassStudentCompleteness(params: {
       const enr = enrollments.find(
         e => e.studentId === student.id && e.subjectId === subject.id && e.sectionId === sectionId
       );
-      const isIncluded = levelType === 'JUNIOR' ? true : (enr !== undefined ? enr.isIncluded : true);
+      const religiousStudiesChoice = getStudentReligiousStudiesChoice(student, sessionId);
+      const isIncluded = isReligiousStudiesSubject(subject)
+        ? religiousStudiesChoice !== undefined
+        : levelType === 'JUNIOR'
+        ? true
+        : enr !== undefined
+        ? enr.isIncluded
+        : true;
 
       if (!isIncluded) return;
 
-      includedSubjectNames.push(subject.name);
+      const subjectName = getSubjectDisplayName(
+        subject,
+        sectionId,
+        isReligiousStudiesSubject(subject) ? religiousStudiesChoice : undefined
+      );
+      includedSubjectNames.push(subjectName);
 
       const missingComponents: string[] = [];
       let recordedTotal = 0;
@@ -498,7 +528,7 @@ export function auditClassStudentCompleteness(params: {
       if (missingComponents.length === components.length) {
         missingSubjects.push({
           subjectId: subject.id,
-          subjectName: subject.name,
+          subjectName,
           subjectCode: subject.code,
           missingComponents: components.map(c => c.shortCode),
           recordedTotal: 0,
@@ -508,7 +538,7 @@ export function auditClassStudentCompleteness(params: {
       } else if (missingComponents.length > 0) {
         missingSubjects.push({
           subjectId: subject.id,
-          subjectName: subject.name,
+          subjectName,
           subjectCode: subject.code,
           missingComponents,
           recordedTotal,

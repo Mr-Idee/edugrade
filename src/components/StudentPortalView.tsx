@@ -5,11 +5,18 @@
 
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
 import { ReportCardView } from './ReportCardView';
 import {
   calculateCumulativePercentage,
   determineGrade
 } from '../utils/academicCalculations';
+import { hasAllSubjectsClearance } from '../utils/rbacAndAuth';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
 import {
   Printer,
   TrendingUp,
@@ -30,7 +37,11 @@ export const StudentPortalView: React.FC = () => {
     selectedSectionId,
     setSelectedSectionId,
     schoolProfile,
+    currentRole,
+    currentUser,
+    teachers,
     currentTerm,
+    currentSession,
     setCurrentTerm,
     terms,
     activeReportType,
@@ -58,6 +69,7 @@ export const StudentPortalView: React.FC = () => {
   const activeSection = useMemo(() => {
     return classSections.find(sec => sec.id === activeStudent?.currentSectionId) || classSections[0];
   }, [classSections, activeStudent]);
+  const activeTeacher = findTeacherForUser(teachers, currentUser);
 
   const annualSummary = useMemo(() => {
     return getStudentAnnualSummary(activeStudent.id);
@@ -89,7 +101,24 @@ export const StudentPortalView: React.FC = () => {
             e.subjectId === sub.id &&
             e.sectionId === activeSection.id
         );
-        const isIncluded = activeSection.levelType === 'JUNIOR' ? true : (enr !== undefined ? enr.isIncluded : true);
+        const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+          activeStudent,
+          currentSession.id
+        );
+        const isIncluded = isReligiousStudiesSubject(sub)
+          ? religiousStudiesChoice !== undefined &&
+            (hasAllSubjectsClearance(currentRole) ||
+              hasTeacherSubjectAssignment(
+                activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                activeSection.id,
+                sub.id,
+                religiousStudiesChoice
+              ))
+          : activeSection.levelType === 'JUNIOR'
+          ? true
+          : enr !== undefined
+          ? enr.isIncluded
+          : true;
 
         let baseRawTotal = 0;
         activeComponents.forEach(comp => {
@@ -141,8 +170,14 @@ export const StudentPortalView: React.FC = () => {
 
         return {
           subjectId: sub.id,
-          subjectName: sub.name,
-          shortName: sub.code || sub.name.slice(0, 6).toUpperCase(),
+          subjectName: getSubjectDisplayName(
+            sub,
+            activeSection.id,
+            isReligiousStudiesSubject(sub) ? religiousStudiesChoice : undefined
+          ),
+          shortName: isReligiousStudiesSubject(sub) && religiousStudiesChoice
+            ? religiousStudiesChoice
+            : sub.code || getSubjectDisplayName(sub, activeSection.id).slice(0, 6).toUpperCase(),
           isIncluded,
           term1Pct: termMap[1],
           term2Pct: termMap[2],
@@ -156,6 +191,9 @@ export const StudentPortalView: React.FC = () => {
   }, [
     activeStudent,
     activeSection,
+    activeTeacher,
+    currentUser,
+    currentRole,
     assessmentComponents,
     isSenior,
     subjects,
@@ -164,7 +202,8 @@ export const StudentPortalView: React.FC = () => {
     termSubjectRecords,
     activeReportType,
     sortedIncludedTerms,
-    currentTerm.id
+    currentTerm.id,
+    currentSession.id
   ]);
 
   // Term averages across included subjects for the Line Graph

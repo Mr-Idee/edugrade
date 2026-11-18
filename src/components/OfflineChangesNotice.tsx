@@ -8,6 +8,7 @@ import {
   PendingOfflineSnapshot
 } from '../utils/offlineSyncEngine';
 import { FullDatabaseSnapshot } from '../utils/sqlExportGenerator';
+import { getSubjectDisplayName } from '../utils/subjectDisplay';
 
 function describeCollection(collection: string): string {
   return collection.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
@@ -50,8 +51,8 @@ function describeConflictValue(
   conflict: OfflineConflict,
   value: unknown,
   lookups: {
-    studentsById: Map<number, string>;
-    subjectsById: Map<number, string>;
+    studentsById: Map<number, { fullName: string; currentSectionId: number }>;
+    subjectsById: Map<number, { name: string; sectionNameOverrides?: Record<string, string> }>;
     componentsById: Map<number, string>;
     teachersById: Map<number, string>;
     templatesById: Map<string, { title: string; columns: Map<string, string> }>;
@@ -61,15 +62,23 @@ function describeConflictValue(
   const record = asRecord(value);
   if (!record) return String(value);
   if (conflict.collection === 'scores') {
-    const studentName = lookups.studentsById.get(Number(record.studentId)) || 'Student name unavailable';
-    const subjectName = lookups.subjectsById.get(Number(record.subjectId)) || 'Subject name unavailable';
+    const student = lookups.studentsById.get(Number(record.studentId));
+    const studentName = student?.fullName || 'Student name unavailable';
+    const subjectName = getSubjectDisplayName(
+      lookups.subjectsById.get(Number(record.subjectId)),
+      student?.currentSectionId
+    ) || 'Subject name unavailable';
     const componentName = lookups.componentsById.get(Number(record.componentId)) || 'Assessment item';
     const teacherName = lookups.teachersById.get(Number(record.updatedBy)) || 'Staff member';
     return `${studentName} · ${subjectName} · ${componentName}: ${formatScore(record.score)} · entered by ${teacherName}`;
   }
   if (conflict.collection === 'termSubjectRecords') {
-    const studentName = lookups.studentsById.get(Number(record.studentId)) || 'Student name unavailable';
-    const subjectName = lookups.subjectsById.get(Number(record.subjectId)) || 'Subject name unavailable';
+    const student = lookups.studentsById.get(Number(record.studentId));
+    const studentName = student?.fullName || 'Student name unavailable';
+    const subjectName = getSubjectDisplayName(
+      lookups.subjectsById.get(Number(record.subjectId)),
+      student?.currentSectionId
+    ) || 'Subject name unavailable';
     return `${studentName} · ${subjectName}: CA1 ${formatScore(record.ca1Score)}, CA2 ${formatScore(record.ca2Score)}, Exam ${formatScore(record.examScore)}, Total ${formatScore(record.totalScore)}`;
   }
   if (conflict.collection === 'customReportTemplates') {
@@ -120,8 +129,11 @@ export const OfflineChangesNotice: React.FC = () => {
     [pendingOfflineSnapshot]
   );
   const lookups = useMemo(() => ({
-    studentsById: new Map(students.map(student => [student.id, student.fullName])),
-    subjectsById: new Map(subjects.map(subject => [subject.id, subject.name])),
+    studentsById: new Map(students.map(student => [
+      student.id,
+      { fullName: student.fullName, currentSectionId: student.currentSectionId }
+    ])),
+    subjectsById: new Map(subjects.map(subject => [subject.id, subject])),
     componentsById: new Map(assessmentComponents.map(component => [component.id, component.name])),
     teachersById: new Map(teachers.map(teacher => [teacher.id, teacher.fullName])),
     templatesById: new Map(customReportTemplates.map(template => [
@@ -148,7 +160,7 @@ export const OfflineChangesNotice: React.FC = () => {
       if (!group) {
         group = {
           studentId,
-          studentName: lookups.studentsById.get(studentId) || 'Student name unavailable',
+          studentName: lookups.studentsById.get(studentId)?.fullName || 'Student name unavailable',
           subjects: new Map()
         };
         groups.set(studentId, group);
@@ -156,7 +168,10 @@ export const OfflineChangesNotice: React.FC = () => {
       let subject = group.subjects.get(subjectId);
       if (!subject) {
         subject = {
-          subjectName: lookups.subjectsById.get(subjectId) || 'Subject name unavailable',
+          subjectName: getSubjectDisplayName(
+            lookups.subjectsById.get(subjectId),
+            lookups.studentsById.get(studentId)?.currentSectionId
+          ) || 'Subject name unavailable',
           entries: []
         };
         group.subjects.set(subjectId, subject);

@@ -809,6 +809,32 @@ test('CSV subject matching normalizes punctuation and safely corrects a one-char
   assert.equal(findCsvSubjectMatch('Digital Technologie', subjects, 'JUNIOR')?.id, 2);
 });
 
+test('year-specific subject labels resolve to the original subject IDs only for their assigned classes', () => {
+  const subjects: Subject[] = [
+    {
+      id: 36,
+      name: 'FASHION DESIGN AND GARMENT MAKING',
+      code: 'FASH',
+      category: 'CORE',
+      applicableLevel: 'JUNIOR',
+      sectionNameOverrides: { '6': 'HOME ECONOMICS' }
+    },
+    {
+      id: 6,
+      name: 'CITIZENSHIP AND HERITAGE STUDIES',
+      code: 'CITI',
+      category: 'CORE',
+      applicableLevel: 'SENIOR',
+      sectionNameOverrides: { '11': 'CIVIC EDUCATION' }
+    }
+  ];
+
+  assert.equal(findCsvSubjectMatch('HOME ECONOMICS', subjects, 'JUNIOR', 6)?.id, 36);
+  assert.equal(findCsvSubjectMatch('HOME ECONOMICS', subjects, 'JUNIOR', 3), undefined);
+  assert.equal(findCsvSubjectMatch('CIVIC EDUCATION', subjects, 'SENIOR', 11)?.id, 6);
+  assert.equal(findCsvSubjectMatch('CIVIC EDUCATION', subjects, 'SENIOR', 10), undefined);
+});
+
 test('CSV-created Junior subjects are Core and receive a unique code', () => {
   const existingSubjects: Subject[] = [
     { id: 1, name: 'Local Studies', code: 'LS', category: 'CORE', applicableLevel: 'JUNIOR' }

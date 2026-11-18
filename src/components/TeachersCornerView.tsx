@@ -16,10 +16,16 @@ import {
   generateTeacherUsername,
   getTeachersCornerTabTitle,
   getTeacherHodDesignation,
-  getDepartmentForSubject
+  getDepartmentForSubject,
+  hasAllSubjectsClearance
 } from '../utils/rbacAndAuth';
 import { canAccessStudentComments } from '../utils/studentCommentPolicy';
-import { findTeacherForUser } from '../utils/staffRolePolicy';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
 import { calculateStudentCommentScores } from '../utils/studentCommentCalculations';
 import {
   resolveCurrentHodReviewer,
@@ -226,6 +232,10 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
     selectedCommentStudentId,
     selectedCommentSectionId,
     currentTerm.id,
+    currentSession.id,
+    currentRole,
+    activeTeacher,
+    currentUser,
     savedStudentComment
   ]);
   const selectedCommentScores = useMemo(() => {
@@ -245,10 +255,24 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
           item.subjectId === subject.id &&
           item.termId === currentTerm.id
       );
-      const isIncluded =
-        commentSection.levelType === 'JUNIOR'
-          ? true
-          : enrollment?.isIncluded ?? subject.category === 'CORE';
+      const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+        selectedCommentStudent,
+        currentSession.id
+      );
+      const isIncluded = isReligiousStudiesSubject(subject)
+        ? Boolean(
+            religiousStudiesChoice &&
+            (hasAllSubjectsClearance(currentRole) ||
+              hasTeacherSubjectAssignment(
+                activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                commentSection.id,
+                subject.id,
+                religiousStudiesChoice
+              ))
+          )
+        : commentSection.levelType === 'JUNIOR'
+        ? true
+        : enrollment?.isIncluded ?? subject.category === 'CORE';
 
       const record = termSubjectRecords.find(
         item =>
@@ -326,7 +350,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
           sectionName: section.name,
           levelType: section.levelType,
           subjectId: subject.id,
-          subjectName: subject.name,
+          subjectName: getSubjectDisplayName(subject, section.id),
           subjectCode: subject.code,
           studentCount: students.filter(student => student.currentSectionId === section.id).length,
           isFormClass: cornerTeacher?.assignedSectionId === section.id
@@ -671,7 +695,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       sectionId: sec.id,
       sectionName: sec.name,
       subjectId: sub.id,
-      subjectName: sub.name,
+      subjectName: getSubjectDisplayName(sub, sec.id),
       termName: currentTerm.name as TermName,
       weekNumber: docWeekNumber
     };
@@ -713,7 +737,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
       });
 
       setUploadSuccessBanner(
-        `Uploaded "${cleanTitle}" (${docExtension}) for Week ${docWeekNumber} • ${sec.name} (${sub.name}).`
+        `Uploaded "${cleanTitle}" (${docExtension}) for Week ${docWeekNumber} • ${sec.name} (${getSubjectDisplayName(sub, sec.id)}).`
       );
       setDocTitle('');
       setSelectedUploadFile(null);
@@ -1162,7 +1186,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                     const subject = subjects.find(item => item.id === assignment.subjectId);
                     return (
                       <div key={`${assignment.sectionId}-${assignment.subjectId}-${index}`} className="rounded-lg border border-slate-200 px-3 py-2">
-                        <div className="text-xs font-bold text-slate-900">{subject?.name || 'Subject not found'}</div>
+                        <div className="text-xs font-bold text-slate-900">{getSubjectDisplayName(subject, section?.id, assignment.religiousStudiesChoice) || 'Subject not found'}</div>
                         <div className="text-[11px] text-slate-500">{section?.name || 'Class not found'}</div>
                       </div>
                     );
@@ -1955,7 +1979,10 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                   <option value="ALL">All Subjects</option>
                   {subjects.map(sub => (
                     <option key={sub.id} value={sub.id}>
-                      {sub.name}
+                      {getSubjectDisplayName(
+                        sub,
+                        filterSectionId === 'ALL' ? undefined : Number(filterSectionId)
+                      )}
                     </option>
                   ))}
                 </select>
@@ -2129,7 +2156,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                             {doc.documentTitle}
                           </h3>
                           <p className="text-xs text-slate-600">
-                            <strong>Teacher:</strong> {doc.teacherName} • <strong>Subject:</strong> {doc.subjectName} • <strong>Class:</strong> {doc.sectionName} •{' '}
+                            <strong>Teacher:</strong> {doc.teacherName} • <strong>Subject:</strong> {getSubjectDisplayName(subjects.find(subject => subject.id === doc.subjectId), doc.sectionId) || doc.subjectName} • <strong>Class:</strong> {doc.sectionName} •{' '}
                             <span className="font-mono text-[11px] text-indigo-900 bg-indigo-50 px-1.5 py-0.5 rounded">
                               Sorted Name: {sortedFileName}
                             </span>
@@ -2629,7 +2656,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                                 {doc.fileExtension} • {doc.fileSizeKb} KB
                               </span>
                               <span className="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700 text-[10px] font-bold">
-                                {doc.subjectName} ({doc.sectionName})
+                                {getSubjectDisplayName(subjects.find(subject => subject.id === doc.subjectId), doc.sectionId) || doc.subjectName} ({doc.sectionName})
                               </span>
                               <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] font-black">
                                 HOD STATUS: {(doc.hodReviewStatus || 'HOD_PENDING').replace('_', ' ')}
@@ -3050,7 +3077,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                     >
                       {subjects.map(sub => (
                         <option key={sub.id} value={sub.id}>
-                          {sub.name}
+                          {getSubjectDisplayName(sub, Number(docSectionId))}
                         </option>
                       ))}
                     </select>
@@ -3184,7 +3211,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                             {doc.documentTitle}
                           </h4>
                           <p className="text-[11px] text-slate-500">
-                            {doc.sectionName} • {doc.subjectName} • <span className="font-mono">{doc.fileName}</span>
+                            {doc.sectionName} • {getSubjectDisplayName(subjects.find(subject => subject.id === doc.subjectId), doc.sectionId) || doc.subjectName} • <span className="font-mono">{doc.fileName}</span>
                           </p>
                         </div>
 
@@ -3334,6 +3361,27 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                       </thead>
                       <tbody className="divide-y divide-slate-200">
                         {stSubs.map(sub => {
+                          const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+                            inspectingStudent,
+                            currentSession.id
+                          );
+                          const canAccessReligiousStudies =
+                            hasAllSubjectsClearance(currentRole) ||
+                            hasTeacherSubjectAssignment(
+                              activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                              sec?.id || -1,
+                              sub.id,
+                              religiousStudiesChoice
+                            );
+                          if (
+                            isReligiousStudiesSubject(sub) &&
+                            (!religiousStudiesChoice || !canAccessReligiousStudies)
+                          ) return null;
+                          const subjectName = getSubjectDisplayName(
+                            sub,
+                            sec?.id,
+                            isReligiousStudiesSubject(sub) ? religiousStudiesChoice : undefined
+                          );
                           const enr = enrollments.find(
                             e => e.studentId === inspectingStudent.id && e.subjectId === sub.id
                           );
@@ -3354,7 +3402,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                           return (
                             <tr key={sub.id} className="hover:bg-slate-50">
                               <td className="py-2 px-3 font-bold text-slate-900">
-                                {sub.name}
+                                {subjectName}
                               </td>
                               <td className="py-2 px-3 text-center">
                                 <input
@@ -3370,7 +3418,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                                     updateTermSubjectScore(inspectingStudent.id, sub.id, currentTerm.id, {
                                       ca1Score: val
                                     });
-                                    setScoreSaveNotice(`Updated ${sub.name} 1st CA score for ${inspectingStudent.fullName}.`);
+                                    setScoreSaveNotice(`Updated ${subjectName} 1st CA score for ${inspectingStudent.fullName}.`);
                                   }}
                                   className="w-16 px-2 py-1 text-center font-mono font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100"
                                 />
@@ -3389,7 +3437,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                                     updateTermSubjectScore(inspectingStudent.id, sub.id, currentTerm.id, {
                                       ca2Score: val
                                     });
-                                    setScoreSaveNotice(`Updated ${sub.name} 2nd CA score for ${inspectingStudent.fullName}.`);
+                                    setScoreSaveNotice(`Updated ${subjectName} 2nd CA score for ${inspectingStudent.fullName}.`);
                                   }}
                                   className="w-16 px-2 py-1 text-center font-mono font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100"
                                 />
@@ -3408,7 +3456,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
                                     updateTermSubjectScore(inspectingStudent.id, sub.id, currentTerm.id, {
                                       examScore: val
                                     });
-                                    setScoreSaveNotice(`Updated ${sub.name} Exam score for ${inspectingStudent.fullName}.`);
+                                    setScoreSaveNotice(`Updated ${subjectName} Exam score for ${inspectingStudent.fullName}.`);
                                   }}
                                   className="w-16 px-2 py-1 text-center font-mono font-bold border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-100"
                                 />

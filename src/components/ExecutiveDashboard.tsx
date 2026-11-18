@@ -22,7 +22,13 @@ import {
   formatRankOrdinal
 } from '../utils/academicCalculations';
 import { downloadExecutiveClassRecordsPdf, downloadSubjectScoresPdf } from '../utils/pdfGenerator';
-import { canPrintOrDownload } from '../utils/rbacAndAuth';
+import { canPrintOrDownload, hasAllSubjectsClearance } from '../utils/rbacAndAuth';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
 
 interface ExecutiveDashboardProps {
   onSelectStudent: (studentId: number) => void;
@@ -33,6 +39,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
     schoolProfile,
     currentRole,
     currentUser,
+    teachers,
     currentSession,
     currentSection,
     classSections,
@@ -52,6 +59,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
 
   const [pdfSavedNotice, setPdfSavedNotice] = useState(false);
   const [selectedExportSubjectId, setSelectedExportSubjectId] = useState<number | ''>('');
+  const activeTeacher = findTeacherForUser(teachers, currentUser);
 
   const isSenior = currentSection.levelType === 'SENIOR';
   const maxCa = isSenior ? 30.0 : 40.0;
@@ -106,8 +114,21 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
             e.subjectId === sub.id &&
             e.sectionId === selectedSectionId
         );
-        const isIncluded =
-          currentSection.levelType === 'JUNIOR' ? true : enr ? enr.isIncluded : true;
+        const religiousStudiesChoice = getStudentReligiousStudiesChoice(student, currentSession.id);
+        const isIncluded = isReligiousStudiesSubject(sub)
+          ? religiousStudiesChoice !== undefined &&
+            (hasAllSubjectsClearance(currentRole) ||
+              hasTeacherSubjectAssignment(
+                activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                selectedSectionId,
+                sub.id,
+                religiousStudiesChoice
+              ))
+          : currentSection.levelType === 'JUNIOR'
+          ? true
+          : enr
+          ? enr.isIncluded
+          : true;
         if (!isIncluded) return;
 
         includedSubjectCount++;
@@ -204,6 +225,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
     termSummaries,
     selectedSectionId,
     currentTerm.id,
+    currentSession.id,
     applicableSubjects,
     enrollments,
     currentSection.levelType,
@@ -211,7 +233,11 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
     levelComponents,
     scores,
     maxCa,
-    maxExam
+    maxExam,
+    currentSession.id,
+    activeTeacher,
+    currentUser,
+    currentRole
   ]);
 
   // Analytics Metrics for Active Term
@@ -270,8 +296,21 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
           const enr = enrollments.find(
             e => e.studentId === st.id && e.subjectId === sub.id && e.sectionId === selectedSectionId
           );
-          const isIncluded =
-            currentSection.levelType === 'JUNIOR' ? true : enr ? enr.isIncluded : true;
+          const religiousStudiesChoice = getStudentReligiousStudiesChoice(st, currentSession.id);
+          const isIncluded = isReligiousStudiesSubject(sub)
+            ? religiousStudiesChoice !== undefined &&
+              (hasAllSubjectsClearance(currentRole) ||
+                hasTeacherSubjectAssignment(
+                  activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                  selectedSectionId,
+                  sub.id,
+                  religiousStudiesChoice
+                ))
+            : currentSection.levelType === 'JUNIOR'
+            ? true
+            : enr
+            ? enr.isIncluded
+            : true;
           if (isIncluded) {
             const termRec = termSubjectRecords.find(
               r => r.studentId === st.id && r.subjectId === sub.id && r.termId === currentTerm.id
@@ -313,9 +352,14 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
     currentSection.levelType,
     termSubjectRecords,
     currentTerm.id,
+    currentSession.id,
     levelComponents,
     scores,
-    maxCa
+    maxCa,
+    currentSession.id,
+    activeTeacher,
+    currentUser,
+    currentRole
   ]);
 
   // Download Class Records in PDF format with Dashboard Formatting
@@ -336,7 +380,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
         ? `${metrics.topStudent.summary.cumulativePercentage}% (${metrics.topStudent.summary.cumulativeGrade})`
         : 'N/A',
       subjectAverages: subjectAverages.map(s => ({
-        name: s.subject.name,
+        name: getSubjectDisplayName(s.subject, currentSection.id),
         category: s.subject.category,
         avgPct: s.avgPct
       })),
@@ -367,7 +411,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
       sectionName: currentSection.name,
       sessionName: currentSession.name,
       termName: currentTerm.name,
-      subjectName: subject.name,
+      subjectName: getSubjectDisplayName(subject, currentSection.id),
       components: exportComponents.map(component => component.name),
       rows: sectionStudents
         .map(student => {
@@ -493,7 +537,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
                   >
                     {applicableSubjects.map(subject => (
                       <option key={subject.id} value={subject.id}>
-                        {subject.name}
+                        {getSubjectDisplayName(subject, currentSection.id)}
                       </option>
                     ))}
                   </select>
@@ -700,7 +744,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ onSelect
                     {idx + 1}
                   </span>
                   <div>
-                    <span className="font-bold text-slate-900">{item.subject.name}</span>
+                    <span className="font-bold text-slate-900">{getSubjectDisplayName(item.subject, currentSection.id)}</span>
                     <span className="ml-1.5 text-[10px] text-slate-400 uppercase">
                       ({item.subject.category})
                     </span>

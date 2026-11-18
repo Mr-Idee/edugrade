@@ -5,6 +5,7 @@ import {
   getStaffVisibleToUser,
   findTeacherForUser,
   findNewInvalidTeacherSubjectAssignments,
+  hasTeacherSubjectAssignment,
   isSubjectApplicableToSection,
   resolveTeacherScoreSelection
 } from './staffRolePolicy';
@@ -118,6 +119,40 @@ test('subject assignment validation rejects new level mismatches but tolerates u
   assert.deepEqual(
     findNewInvalidTeacherSubjectAssignments(invalidNext, invalidNext),
     []
+  );
+});
+
+test('religious studies assignments isolate CRS and IRS while sharing one subject ID', () => {
+  const assignments: TeacherSubjectAssignment[] = [
+    { sectionId: 7, subjectId: 35, religiousStudiesChoice: 'CRS' },
+    { sectionId: 7, subjectId: 35, religiousStudiesChoice: 'IRS' }
+  ];
+
+  assert.equal(hasTeacherSubjectAssignment(assignments, 7, 35, 'CRS'), true);
+  assert.equal(hasTeacherSubjectAssignment(assignments, 7, 35, 'IRS'), true);
+  assert.equal(hasTeacherSubjectAssignment(assignments, 8, 35, 'CRS'), false);
+  assert.equal(hasTeacherSubjectAssignment([{ sectionId: 7, subjectId: 35 }], 7, 35, 'CRS'), false);
+});
+
+test('new religious studies assignments require a valid religion choice', () => {
+  const previous = {
+    teachers: [{ id: 7, assignedSubjects: [] as TeacherSubjectAssignment[] }],
+    classSections: [{ id: 7, levelType: 'JUNIOR' as const }],
+    subjects: [{ id: 35, applicableLevel: 'JUNIOR' as const }]
+  };
+  const missingChoice = {
+    ...previous,
+    teachers: [{ id: 7, assignedSubjects: [{ sectionId: 7, subjectId: 35 }] }]
+  };
+
+  assert.deepEqual(
+    findNewInvalidTeacherSubjectAssignments(previous, missingChoice),
+    [{
+      teacherId: 7,
+      sectionId: 7,
+      subjectId: 35,
+      reason: 'religious-choice-required'
+    }]
   );
 });
 

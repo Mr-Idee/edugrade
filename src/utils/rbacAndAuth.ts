@@ -5,6 +5,7 @@
 
 import { UserRole, LevelType, GradingScale, AssessmentComponent, Subject, Student, StudentTestimonial, User } from '../types/index';
 import { SENIOR_GRADING_SCALES, JUNIOR_GRADING_SCALES } from './academicCalculations';
+import { getSubjectDisplayName } from './subjectDisplay';
 
 export type AppTab =
   | 'home'
@@ -332,13 +333,15 @@ function editDistanceAtMostOne(left: string, right: string): boolean {
 export function findCsvSubjectMatch(
   rawSubjectName: string,
   subjects: Subject[],
-  levelType?: LevelType
+  levelType?: LevelType,
+  sectionId?: number
 ): Subject | undefined {
   const candidates = subjects.filter(subject => isApplicableToLevel(subject, levelType));
   const normalizedName = normalizeCsvSubjectLabel(rawSubjectName);
   if (!normalizedName) return undefined;
 
   const exactMatches = candidates.filter(subject =>
+    normalizeCsvSubjectLabel(getSubjectDisplayName(subject, sectionId)) === normalizedName ||
     normalizeCsvSubjectLabel(subject.name) === normalizedName ||
     normalizeCsvSubjectLabel(subject.code) === normalizedName
   );
@@ -347,7 +350,7 @@ export function findCsvSubjectMatch(
 
   if (normalizedName.length < 6) return undefined;
   const nearMatches = candidates.filter(subject =>
-    [subject.name, subject.code].some(label => {
+    [getSubjectDisplayName(subject, sectionId), subject.name, subject.code].some(label => {
       const normalizedLabel = normalizeCsvSubjectLabel(label);
       return normalizedLabel.length >= 6 && editDistanceAtMostOne(normalizedLabel, normalizedName);
     })
@@ -425,6 +428,7 @@ export function parseBulkCsvWithSubjectInclusion(params: {
   components: AssessmentComponent[];
   defaultInclude?: boolean;
   levelType?: LevelType;
+  sectionId?: number;
 }): ParsedCsvStudentGroup[] {
   const {
     csvText,
@@ -433,7 +437,8 @@ export function parseBulkCsvWithSubjectInclusion(params: {
     defaultSubject,
     components,
     defaultInclude = true,
-    levelType
+    levelType,
+    sectionId
   } = params;
 
   if (!csvText || !csvText.trim()) return [];
@@ -505,7 +510,7 @@ export function parseBulkCsvWithSubjectInclusion(params: {
     }
 
     const targetSub = rawSub
-      ? findCsvSubjectMatch(rawSub, subjects, levelType)
+      ? findCsvSubjectMatch(rawSub, subjects, levelType, sectionId)
       : defaultSubject;
 
     const includeIndex = hasHeader ? includeColIdx : 3;
@@ -546,7 +551,7 @@ export function parseBulkCsvWithSubjectInclusion(params: {
     });
 
     record.subjectScores.push({
-      subjectName: targetSub?.name || rawSub.trim(),
+      subjectName: getSubjectDisplayName(targetSub, sectionId) || rawSub.trim(),
       subjectId: targetSub?.id ?? 0,
       isIncluded,
       scores: rowScores

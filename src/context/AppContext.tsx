@@ -106,6 +106,12 @@ import {
 } from '../utils/staffRolePolicy';
 import { canAccessStudentComments } from '../utils/studentCommentPolicy';
 import {
+  getSubjectDisplayName,
+  getStudentReligiousStudiesChoice,
+  isReligiousStudiesSubject,
+  RELIGIOUS_STUDIES_SUBJECT_ID
+} from '../utils/subjectDisplay';
+import {
   SystemBackupRecord,
   SystemBackupListItem,
   SystemStateSnapshot,
@@ -217,9 +223,23 @@ interface AppContextType {
   }) => Promise<{ ok: boolean; message: string }>;
   deleteTeacher: (id: number) => void;
   assignFormTutor: (sectionId: number, teacherName: string, teacherId?: number) => void;
-  assignSubjectToTeacher: (sectionId: number, subjectId: number, teacherId: number) => boolean;
-  removeSubjectFromTeacher: (sectionId: number, subjectId: number, teacherId: number) => void;
-  getAssignedTeacherForSubject: (sectionId: number, subjectId: number) => Teacher | undefined;
+  assignSubjectToTeacher: (
+    sectionId: number,
+    subjectId: number,
+    teacherId: number,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => boolean;
+  removeSubjectFromTeacher: (
+    sectionId: number,
+    subjectId: number,
+    teacherId: number,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => void;
+  getAssignedTeacherForSubject: (
+    sectionId: number,
+    subjectId: number,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => Teacher | undefined;
   completeTeacherPasswordSetup: (username: string, newPassword: string, initialPin: string) => Promise<{ ok: boolean; message: string }>;
   requestPasswordResetForUsername: (username: string) => Promise<{ ok: boolean; message: string }>;
   approveTeacherPasswordReset: (teacherId: number) => Promise<{ ok: boolean; message: string }>;
@@ -2094,10 +2114,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const getAssignedTeacherForSubject = useCallback(
-    (sectionId: number, subjectId: number): Teacher | undefined => {
+    (
+      sectionId: number,
+      subjectId: number,
+      religiousStudiesChoice?: 'CRS' | 'IRS'
+    ): Teacher | undefined => {
       return teachers.find(t =>
         (t.assignedSubjects || []).some(
-          a => Number(a.sectionId) === Number(sectionId) && Number(a.subjectId) === Number(subjectId)
+          a =>
+            Number(a.sectionId) === Number(sectionId) &&
+            Number(a.subjectId) === Number(subjectId) &&
+            (Number(subjectId) !== RELIGIOUS_STUDIES_SUBJECT_ID ||
+              a.religiousStudiesChoice === religiousStudiesChoice)
         )
       );
     },
@@ -2105,20 +2133,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   // Assign a subject in a class section to a teacher (removing it from any previously assigned teacher)
-  const assignSubjectToTeacher = useCallback((sectionId: number, subjectId: number, teacherId: number) => {
+  const assignSubjectToTeacher = useCallback((
+    sectionId: number,
+    subjectId: number,
+    teacherId: number,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => {
     const section = classSections.find(item => Number(item.id) === Number(sectionId));
     const subject = subjects.find(item => Number(item.id) === Number(subjectId));
     if (!section || !subject || !isSubjectApplicableToSection(subject, section)) return false;
+    if (
+      Number(subjectId) === RELIGIOUS_STUDIES_SUBJECT_ID &&
+      religiousStudiesChoice !== 'CRS' &&
+      religiousStudiesChoice !== 'IRS'
+    ) return false;
 
     setTeachers(prev => {
       const next = prev.map(t => {
         const filtered = (t.assignedSubjects || []).filter(
-          a => !(Number(a.sectionId) === Number(sectionId) && Number(a.subjectId) === Number(subjectId))
+          a => !(
+            Number(a.sectionId) === Number(sectionId) &&
+            Number(a.subjectId) === Number(subjectId) &&
+            (
+              Number(subjectId) !== RELIGIOUS_STUDIES_SUBJECT_ID ||
+              a.religiousStudiesChoice === religiousStudiesChoice ||
+              a.religiousStudiesChoice === undefined
+            )
+          )
         );
         if (t.id === teacherId) {
           return {
             ...t,
-            assignedSubjects: [...filtered, { sectionId: Number(sectionId), subjectId: Number(subjectId) }]
+            assignedSubjects: [
+              ...filtered,
+              {
+                sectionId: Number(sectionId),
+                subjectId: Number(subjectId),
+                ...(religiousStudiesChoice ? { religiousStudiesChoice } : {})
+              }
+            ]
           };
         }
         return {
@@ -2142,14 +2195,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   }, [classSections, subjects]);
 
-  const removeSubjectFromTeacher = useCallback((sectionId: number, subjectId: number, teacherId: number) => {
+  const removeSubjectFromTeacher = useCallback((
+    sectionId: number,
+    subjectId: number,
+    teacherId: number,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => {
     setTeachers(prev => {
       const next = prev.map(t => {
         if (t.id !== teacherId) return t;
         return {
           ...t,
           assignedSubjects: (t.assignedSubjects || []).filter(
-            a => !(Number(a.sectionId) === Number(sectionId) && Number(a.subjectId) === Number(subjectId))
+            a => !(
+              Number(a.sectionId) === Number(sectionId) &&
+              Number(a.subjectId) === Number(subjectId) &&
+              (
+                Number(subjectId) !== RELIGIOUS_STUDIES_SUBJECT_ID ||
+                a.religiousStudiesChoice === religiousStudiesChoice
+              )
+            )
           )
         };
       });
@@ -2936,8 +3001,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       sectionSubjects.forEach(sub => {
         const enr = enrollments.find(e => e.studentId === st.id && e.subjectId === sub.id && e.sectionId === sectionId);
-        // For junior students, all subjects are ALWAYS included (core)
-        const isIncluded = section.levelType === 'JUNIOR' ? true : (enr ? enr.isIncluded : true);
+        const isIncluded = isReligiousStudiesSubject(sub)
+          ? getStudentReligiousStudiesChoice(st, currentSession.id) !== undefined
+          : section.levelType === 'JUNIOR'
+          ? true
+          : enr
+          ? enr.isIncluded
+          : true;
 
         let rawTotal = 0;
         if (isIncluded) {
@@ -2955,7 +3025,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         studentEntries.push({
           subjectId: sub.id,
-          subjectName: sub.name,
+          subjectName: getSubjectDisplayName(
+            sub,
+            section.id,
+            isReligiousStudiesSubject(sub)
+              ? getStudentReligiousStudiesChoice(st, currentSession.id)
+              : undefined
+          ),
           isIncluded,
           rawTotal,
           maxScore: maxSubjectCa,
@@ -3017,7 +3093,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       return updated;
     });
-  }, [classSections, students, subjects, assessmentComponents, enrollments, scores, currentTerm.id]);
+  }, [
+    classSections,
+    students,
+    subjects,
+    assessmentComponents,
+    enrollments,
+    scores,
+    currentTerm.id,
+    currentSession.id
+  ]);
+
+  const religiousStudiesChoiceSignature = students
+    .map(student => {
+      const choice = getStudentReligiousStudiesChoice(student, currentSession.id);
+      return choice ? `${student.id}:${choice}` : undefined;
+    })
+    .filter((value): value is string => value !== undefined)
+    .sort()
+    .join('|');
+  const previousReligiousStudiesChoiceSignature = useRef(religiousStudiesChoiceSignature);
+  useEffect(() => {
+    if (previousReligiousStudiesChoiceSignature.current === religiousStudiesChoiceSignature) return;
+    previousReligiousStudiesChoiceSignature.current = religiousStudiesChoiceSignature;
+    classSections
+      .filter(section => section.levelType === 'JUNIOR')
+      .forEach(section => recalculateSectionSummaries(section.id));
+  }, [religiousStudiesChoiceSignature, classSections, recalculateSectionSummaries]);
 
   // Update Score (Automatic Commit & Audit + Central Term Subject Record Sync)
   const updateScore = useCallback((
@@ -3160,7 +3262,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         studentId,
         subjectId,
         studentName: student?.fullName || 'Unknown student',
-        subjectName: subject?.name || `Subject #${subjectId}`,
+        subjectName: getSubjectDisplayName(
+          subject,
+          student?.currentSectionId,
+          isReligiousStudiesSubject(subject)
+            ? getStudentReligiousStudiesChoice(student, currentSession.id)
+            : undefined
+        ) || `Subject #${subjectId}`,
         componentName: comp.name,
         previousScore,
         newScore: score,
@@ -3181,7 +3289,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     return { success: true };
-  }, [assessmentComponents, students, classSections, subjects, currentUser, currentRole, enrollments, scores, currentTerm.id, recalculateSectionSummaries]);
+  }, [
+    assessmentComponents,
+    students,
+    classSections,
+    subjects,
+    currentUser,
+    currentRole,
+    enrollments,
+    scores,
+    currentTerm.id,
+    currentSession.id,
+    recalculateSectionSummaries
+  ]);
 
   // Update Term Subject Record:
   // Junior: 1st CA (20 = 40/2) + 2nd CA (20 = 40/2) + Exam (60) = 100

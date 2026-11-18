@@ -23,7 +23,8 @@ import {
   hasAllSubjectsClearance,
   getTeacherAssignedSubjectIdsForSection
 } from '../utils/rbacAndAuth';
-import { findTeacherForUser } from '../utils/staffRolePolicy';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
+import { getSubjectDisplayName, isReligiousStudiesSubject } from '../utils/subjectDisplay';
 
 interface HomeViewProps {
   onSelectClassAndSubject: (sectionId: number, subjectId: number) => void;
@@ -82,7 +83,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         : sub.applicableLevel === 'JUNIOR' || sub.applicableLevel === 'BOTH';
       const matchesQuery =
         !subjectSearch.trim() ||
-        sub.name.toLowerCase().includes(subjectSearch.toLowerCase()) ||
+        getSubjectDisplayName(sub, modalClassSection?.id).toLowerCase().includes(subjectSearch.toLowerCase()) ||
         sub.code.toLowerCase().includes(subjectSearch.toLowerCase());
       return matchesLevel && matchesQuery;
     });
@@ -95,8 +96,25 @@ export const HomeView: React.FC<HomeViewProps> = ({
       activeTeacherAssignedSubjects,
       modalClassSection.id
     );
-    return levelFiltered.filter(sub => assignedIds.includes(Number(sub.id)));
+    return levelFiltered.filter(sub => {
+      if (!assignedIds.includes(Number(sub.id))) return false;
+      if (!isReligiousStudiesSubject(sub)) return true;
+      return (
+        hasTeacherSubjectAssignment(activeTeacherAssignedSubjects, modalClassSection.id, sub.id, 'CRS') ||
+        hasTeacherSubjectAssignment(activeTeacherAssignedSubjects, modalClassSection.id, sub.id, 'IRS')
+      );
+    });
   }, [modalClassSection, subjects, subjectSearch, fullSubjectClearance, activeTeacherAssignedSubjects]);
+  const modalReligiousStudiesChoices = modalClassSection
+    ? (['CRS', 'IRS'] as const).filter(choice =>
+        hasTeacherSubjectAssignment(
+          activeTeacherAssignedSubjects,
+          modalClassSection.id,
+          subjects.find(isReligiousStudiesSubject)?.id ?? -1,
+          choice
+        )
+      )
+    : [];
   const hasSubjectAssignmentForModal =
     fullSubjectClearance ||
     (modalClassSection !== null &&
@@ -328,7 +346,24 @@ export const HomeView: React.FC<HomeViewProps> = ({
             );
             const classSubjectCount = fullSubjectClearance
               ? levelSubjects.length
-              : levelSubjects.filter(subject => assignedSubjectIds.includes(Number(subject.id))).length;
+              : levelSubjects.filter(subject => {
+                  if (!assignedSubjectIds.includes(Number(subject.id))) return false;
+                  if (!isReligiousStudiesSubject(subject)) return true;
+                  return (
+                    hasTeacherSubjectAssignment(
+                      activeTeacherAssignedSubjects,
+                      sec.id,
+                      subject.id,
+                      'CRS'
+                    ) ||
+                    hasTeacherSubjectAssignment(
+                      activeTeacherAssignedSubjects,
+                      sec.id,
+                      subject.id,
+                      'IRS'
+                    )
+                  );
+                }).length;
 
             return (
               <button
@@ -439,7 +474,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 >
                   <div>
                     <div className="font-bold text-xs sm:text-sm text-slate-900 group-hover:text-indigo-900">
-                      {sub.name}
+                      {getSubjectDisplayName(
+                        sub,
+                        modalClassSection?.id,
+                        isReligiousStudiesSubject(sub) &&
+                          !fullSubjectClearance &&
+                          modalReligiousStudiesChoices.length === 1
+                          ? modalReligiousStudiesChoices[0]
+                          : undefined
+                      )}
                     </div>
                     <div className="flex items-center space-x-2 mt-0.5">
                       <span className="text-[10px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">

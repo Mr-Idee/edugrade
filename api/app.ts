@@ -32,6 +32,7 @@ import {
 import {
   canViewSubjectRecordInReport,
   canAssignStaffRole,
+  hasTeacherSubjectAssignment,
   findNewInvalidTeacherSubjectAssignments,
   isSubjectApplicableToSection
 } from '../src/utils/staffRolePolicy.ts';
@@ -44,6 +45,13 @@ import {
 import { RevisionedValueCache } from '../src/utils/revisionedValueCache.ts';
 import { DocumentBytesCache } from '../src/utils/documentBytesCache.ts';
 import { findLinkedSuperAdminUsername } from '../src/utils/supabaseAuthMapping.ts';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject,
+  RELIGIOUS_STUDIES_SUBJECT_ID,
+  withStudentReligiousStudiesChoice
+} from '../src/utils/subjectDisplay.ts';
 
 type UserRole =
   | 'SUPER_ADMIN'
@@ -601,30 +609,66 @@ function getTeacherAccessScope(
   const assignmentPairs = new Set<string>();
   const assignedSubjectIds = new Set<number>();
   const sectionIds = new Set<number>();
+  const teacherAssignments = teacher?.assignedSubjects || [];
 
   if (formSectionId !== undefined) sectionIds.add(formSectionId);
-  for (const assignment of teacher?.assignedSubjects || []) {
+  for (const assignment of teacherAssignments) {
     const sectionId = positiveId(assignment.sectionId);
     const subjectId = positiveId(assignment.subjectId);
     if (sectionId === undefined || subjectId === undefined) continue;
     sectionIds.add(sectionId);
     assignedSubjectIds.add(subjectId);
-    assignmentPairs.add(assignmentKey(sectionId, subjectId));
+    if (subjectId !== RELIGIOUS_STUDIES_SUBJECT_ID) {
+      assignmentPairs.add(assignmentKey(sectionId, subjectId));
+    }
   }
 
   const isFormTutor = identity.record.role === 'CLASS_TEACHER' && formSectionId !== undefined;
-  const canAccessSubject = (sectionIdValue: unknown, subjectIdValue: unknown) => {
+  const canAccessSubject = (
+    sectionIdValue: unknown,
+    subjectIdValue: unknown,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => {
     const sectionId = positiveId(sectionIdValue);
     const subjectId = positiveId(subjectIdValue);
     if (sectionId === undefined || subjectId === undefined) return false;
+    if (subjectId === RELIGIOUS_STUDIES_SUBJECT_ID) {
+      if (religiousStudiesChoice === undefined) {
+        return teacherAssignments.some(assignment =>
+          Number(assignment.sectionId) === sectionId &&
+          Number(assignment.subjectId) === subjectId &&
+          (assignment.religiousStudiesChoice === 'CRS' || assignment.religiousStudiesChoice === 'IRS')
+        );
+      }
+      return hasTeacherSubjectAssignment(
+        teacherAssignments,
+        sectionId,
+        subjectId,
+        religiousStudiesChoice
+      );
+    }
     return (
       (isFormTutor && sectionId === formSectionId) ||
       assignmentPairs.has(assignmentKey(sectionId, subjectId))
     );
   };
-  const canEditSubject = (sectionIdValue: unknown, subjectIdValue: unknown) => {
+  const canEditSubject = (
+    sectionIdValue: unknown,
+    subjectIdValue: unknown,
+    religiousStudiesChoice?: 'CRS' | 'IRS'
+  ) => {
     const sectionId = positiveId(sectionIdValue);
     const subjectId = positiveId(subjectIdValue);
+    if (subjectId === RELIGIOUS_STUDIES_SUBJECT_ID) {
+      return sectionId !== undefined &&
+        religiousStudiesChoice !== undefined &&
+        hasTeacherSubjectAssignment(
+          teacherAssignments,
+          sectionId,
+          subjectId,
+          religiousStudiesChoice
+        );
+    }
     return sectionId !== undefined &&
       subjectId !== undefined &&
       assignmentPairs.has(assignmentKey(sectionId, subjectId));
@@ -660,6 +704,10 @@ function filterSnapshotForStaff(
   const hodDepartments = getHodDepartmentsForTeacher(snapshot, teacher, identity.username);
   const students = snapshot.students.filter(student => sectionIds.has(positiveId(student.currentSectionId) || -1));
   const studentIds = new Set(students.map(student => positiveId(student.id)).filter((id): id is number => id !== undefined));
+  const currentSessionId = positiveId(snapshot.sessions.find(session => session.isCurrent)?.id);
+  const studentById = new Map(
+    students.map(student => [positiveId(student.id) || -1, student])
+  );
   const studentSectionIds = new Map<number, number>();
   for (const student of students) {
     const studentId = positiveId(student.id);
@@ -675,14 +723,27 @@ function filterSnapshotForStaff(
   const subjectById = new Map(
     snapshot.subjects.map(subject => [positiveId(subject.id) || -1, subject])
   );
-  const canViewSubjectRecord = (sectionIdValue: unknown, subjectIdValue: unknown) => {
+  const canViewSubjectRecord = (
+    sectionIdValue: unknown,
+    subjectIdValue: unknown,
+    studentIdValue?: unknown
+  ) => {
     const sectionId = positiveId(sectionIdValue);
     const subjectId = positiveId(subjectIdValue);
     if (sectionId === undefined || subjectId === undefined || !sectionIds.has(sectionId)) return false;
+    const subject = subjectById.get(subjectId);
+    const studentId = positiveId(studentIdValue);
+    if (isReligiousStudiesSubject(subject)) {
+      const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+        studentId === undefined ? undefined : studentById.get(studentId),
+        currentSessionId
+      );
+      return canAccessSubject(sectionId, subjectId, religiousStudiesChoice);
+    }
     return canViewSubjectRecordInReport(
       identity.record.role,
       sectionById.get(sectionId),
-      subjectById.get(subjectId),
+      subject,
       canAccessSubject(sectionId, subjectId)
     );
   };
@@ -728,7 +789,7 @@ function filterSnapshotForStaff(
             sectionId !== undefined &&
             templateStudentIds.has(studentId) &&
             selectedSubjectIds.has(subjectId) &&
-            canViewSubjectRecord(sectionId, subjectId)
+            canViewSubjectRecord(sectionId, subjectId, studentId)
           );
         })
       );
@@ -769,7 +830,7 @@ function filterSnapshotForStaff(
       enrollment =>
         sectionIds.has(positiveId(enrollment.sectionId) || -1) &&
         studentIds.has(positiveId(enrollment.studentId) || -1) &&
-        canViewSubjectRecord(enrollment.sectionId, enrollment.subjectId)
+        canViewSubjectRecord(enrollment.sectionId, enrollment.subjectId, enrollment.studentId)
     ),
     scores: snapshot.scores.filter(
       score => {
@@ -779,7 +840,7 @@ function filterSnapshotForStaff(
           studentId !== undefined &&
           sectionId !== undefined &&
           studentIds.has(studentId) &&
-          canViewSubjectRecord(sectionId, score.subjectId)
+          canViewSubjectRecord(sectionId, score.subjectId, studentId)
         );
       }
     ),
@@ -791,7 +852,7 @@ function filterSnapshotForStaff(
           studentId !== undefined &&
           sectionId !== undefined &&
           studentIds.has(studentId) &&
-          canViewSubjectRecord(sectionId, record.subjectId)
+          canViewSubjectRecord(sectionId, record.subjectId, studentId)
         );
       }
     ),
@@ -852,13 +913,32 @@ function mergeScopedSnapshot(
     }
   }
   const studentIds = new Set(studentSectionIds.keys());
+  const currentSessionId = positiveId(current.sessions.find(session => session.isCurrent)?.id);
+  const currentStudentsById = new Map(
+    current.students
+      .map(student => [positiveId(student.id), student] as const)
+      .filter((entry): entry is readonly [number, typeof current.students[number]] =>
+        entry[0] !== undefined
+      )
+  );
+  const studentReligiousStudiesChoice = (studentIdValue: unknown) => {
+    const studentId = positiveId(studentIdValue);
+    return getStudentReligiousStudiesChoice(
+      studentId === undefined ? undefined : currentStudentsById.get(studentId),
+      currentSessionId
+    );
+  };
   const canEdit = (record: { studentId: number; subjectId: number }) => {
     const studentId = positiveId(record.studentId);
     const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
     return (
       studentId !== undefined &&
       sectionId !== undefined &&
-      canEditSubject(sectionId, record.subjectId)
+      canEditSubject(
+        sectionId,
+        record.subjectId,
+        studentReligiousStudiesChoice(studentId)
+      )
     );
   };
   const mergeById = <T extends { id: number }>(
@@ -879,7 +959,30 @@ function mergeScopedSnapshot(
     : submitted.termSummaries;
   const merged: FullDatabaseSnapshot = {
     ...current,
-    students: [...current.students, ...newFormTutorStudents],
+    students: [
+      ...current.students.map(student => {
+        const studentId = positiveId(student.id);
+        const incoming = submitted.students.find(
+          item => Number(item.id) === Number(studentId)
+        );
+        if (
+          !isFormTutor ||
+          studentId === undefined ||
+          positiveId(student.currentSectionId) !== formSectionId ||
+          !incoming ||
+          currentSessionId === undefined
+        ) return student;
+        return {
+          ...student,
+          religiousStudiesChoiceBySession: withStudentReligiousStudiesChoice(
+            student,
+            currentSessionId,
+            getStudentReligiousStudiesChoice(incoming, currentSessionId)
+          )
+        };
+      }),
+      ...newFormTutorStudents
+    ],
     enrollments: [...current.enrollments, ...newFormTutorEnrollments],
     scores: mergeScopedRecords(current.scores, submitted.scores),
     termSubjectRecords: mergeScopedRecords(current.termSubjectRecords, submitted.termSubjectRecords),
@@ -897,7 +1000,10 @@ function mergeScopedSnapshot(
         const studentId = positiveId(log.studentId);
         const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
         const subjectId = positiveId(log.subjectId) ?? positiveId(
-          current.subjects.find(subject => subject.name === log.subjectName)?.id
+          current.subjects.find(subject =>
+            subject.name === log.subjectName ||
+            getSubjectDisplayName(subject, sectionId) === log.subjectName
+          )?.id
         );
         return Boolean(
           teacher &&
@@ -905,7 +1011,11 @@ function mergeScopedSnapshot(
           sectionId !== undefined &&
           studentIds.has(studentId) &&
           subjectId !== undefined &&
-          canEditSubject(sectionId, subjectId) &&
+          canEditSubject(
+            sectionId,
+            subjectId,
+            studentReligiousStudiesChoice(studentId)
+          ) &&
           log.changedBy === teacher.fullName &&
           USER_ROLES.has(log.changedByRole)
         );

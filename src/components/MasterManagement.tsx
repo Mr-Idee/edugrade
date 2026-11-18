@@ -14,7 +14,8 @@ import {
   Subject,
   GradingScaleScope,
   GradingScaleBand,
-  UserRole
+  UserRole,
+  ReligiousStudiesChoice
 } from '../types/index';
 import {
   canAccessDatabaseConfig,
@@ -26,6 +27,10 @@ import {
   resolveInstitutionLogoUrl,
   DEFAULT_INSTITUTION_LOGO_DATA_URI
 } from '../utils/rbacAndAuth';
+import {
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
 import {
   formatBackupTimestamp,
   formatByteSize,
@@ -527,6 +532,13 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
   const [assignSubjSubjectId, setAssignSubjSubjectId] = useState<number>(
     assignableSubjectsForSelectedClass[0]?.id || subjects[0]?.id || 1
   );
+  const [assignSubjReligiousChoice, setAssignSubjReligiousChoice] =
+    useState<ReligiousStudiesChoice>('CRS');
+  const isAssigningReligiousStudies = isReligiousStudiesSubject(
+    assignableSubjectsForSelectedClass.find(
+      subject => Number(subject.id) === Number(assignSubjSubjectId)
+    )
+  );
 
   React.useEffect(() => {
     if (
@@ -542,6 +554,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
     type: 'CLASS_TUTOR' | 'SUBJECT_TEACHER';
     sectionId: number;
     subjectId?: number;
+    religiousStudiesChoice?: ReligiousStudiesChoice;
     currentHolderName: string;
     newTeacherId: number;
     newTeacherName: string;
@@ -811,7 +824,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
 
     const existingHolder = getAssignedTeacherForSubject(
       Number(assignSubjSectionId),
-      Number(assignSubjSubjectId)
+      Number(assignSubjSubjectId),
+      isAssigningReligiousStudies ? assignSubjReligiousChoice : undefined
     );
 
     if (existingHolder && existingHolder.id !== targetTeacher.id) {
@@ -819,6 +833,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
         type: 'SUBJECT_TEACHER',
         sectionId: Number(assignSubjSectionId),
         subjectId: Number(assignSubjSubjectId),
+        religiousStudiesChoice:
+          isAssigningReligiousStudies ? assignSubjReligiousChoice : undefined,
         currentHolderName: existingHolder.fullName,
         newTeacherId: targetTeacher.id,
         newTeacherName: targetTeacher.fullName
@@ -829,7 +845,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
     const assigned = assignSubjectToTeacher(
       Number(assignSubjSectionId),
       Number(assignSubjSubjectId),
-      targetTeacher.id
+      targetTeacher.id,
+      isAssigningReligiousStudies ? assignSubjReligiousChoice : undefined
     );
     if (!assigned) {
       setStaffActionNotice({
@@ -840,7 +857,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
       return;
     }
     const secName = classSections.find(s => s.id === Number(assignSubjSectionId))?.name || 'Class';
-    const subName = subjects.find(s => s.id === Number(assignSubjSubjectId))?.name || 'Subject';
+    const subName = getSubjectDisplayName(
+      subjects.find(s => s.id === Number(assignSubjSubjectId)),
+      Number(assignSubjSectionId),
+      isAssigningReligiousStudies ? assignSubjReligiousChoice : undefined
+    ) || 'Subject';
     setStaffActionNotice({ ok: true, message: `Assigned ${subName} (${secName}) to ${targetTeacher.fullName}` });
     setTimeout(() => setStaffActionNotice(null), 4000);
   };
@@ -863,7 +884,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
       const assigned = assignSubjectToTeacher(
         pendingReassignment.sectionId,
         pendingReassignment.subjectId,
-        pendingReassignment.newTeacherId
+        pendingReassignment.newTeacherId,
+        pendingReassignment.religiousStudiesChoice
       );
       if (!assigned) {
         setPendingReassignment(null);
@@ -874,7 +896,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
         setTimeout(() => setStaffActionNotice(null), 4000);
         return;
       }
-      const subName = subjects.find(s => s.id === pendingReassignment.subjectId)?.name || 'Subject';
+      const subName = getSubjectDisplayName(
+        subjects.find(s => s.id === pendingReassignment.subjectId),
+        pendingReassignment.sectionId,
+        pendingReassignment.religiousStudiesChoice
+      ) || 'Subject';
       setStaffActionNotice({
         ok: true,
         message: `Reassigned ${subName} in ${secName} from ${pendingReassignment.currentHolderName} to ${pendingReassignment.newTeacherName}`
@@ -1073,6 +1099,17 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
           !subject.applicableLevel
         )
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      const directorySubjects = applicableSubjects.flatMap<{
+        subject: Subject;
+        religiousStudiesChoice?: ReligiousStudiesChoice;
+      }>(subject =>
+        isReligiousStudiesSubject(subject)
+          ? (['CRS', 'IRS'] as const).map(religiousStudiesChoice => ({
+              subject,
+              religiousStudiesChoice
+            }))
+          : [{ subject }]
+      );
       return {
         section,
         formTutor:
@@ -1090,15 +1127,20 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
             admissionNumber: student.admissionNumber,
             gender: student.gender
           })),
-        subjects: applicableSubjects.map(subject => ({
-          name: subject.name,
-          code: subject.code,
+        subjects: directorySubjects.map(({ subject, religiousStudiesChoice }) => ({
+          name: getSubjectDisplayName(subject, section.id, religiousStudiesChoice),
+          code: religiousStudiesChoice || subject.code,
           category: subject.category,
           teachers: teachers
             .filter(teacher =>
               teacher.assignedSubjects?.some(
                 assignment =>
-                  assignment.sectionId === section.id && assignment.subjectId === subject.id
+                  assignment.sectionId === section.id &&
+                  assignment.subjectId === subject.id &&
+                  (
+                    !isReligiousStudiesSubject(subject) ||
+                    assignment.religiousStudiesChoice === religiousStudiesChoice
+                  )
               )
             )
             .map(teacher => teacher.fullName)
@@ -1115,7 +1157,9 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
           .map(assignment => {
             const section = classSections.find(item => item.id === assignment.sectionId);
             const subject = subjects.find(item => item.id === assignment.subjectId);
-            return section && subject ? `${section.name} — ${subject.name}` : null;
+            return section && subject
+              ? `${section.name} — ${getSubjectDisplayName(subject, section.id, assignment.religiousStudiesChoice)}`
+              : null;
           })
           .filter((entry): entry is string => entry !== null)
           .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
@@ -1960,15 +2004,46 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                       className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
                     >
                       {assignableSubjectsForSelectedClass.map(sub => {
-                        const holder = getAssignedTeacherForSubject(assignSubjSectionId, sub.id);
+                        const displayName = getSubjectDisplayName(
+                          sub,
+                          Number(assignSubjSectionId),
+                          isReligiousStudiesSubject(sub) ? assignSubjReligiousChoice : undefined
+                        );
+                        const holder = getAssignedTeacherForSubject(
+                          assignSubjSectionId,
+                          sub.id,
+                          isReligiousStudiesSubject(sub) ? assignSubjReligiousChoice : undefined
+                        );
                         return (
                           <option key={sub.id} value={sub.id}>
-                            {sub.name} {holder ? `(Assigned: ${holder.fullName})` : '(Unassigned)'}
+                            {displayName} {holder ? `(Assigned: ${holder.fullName})` : '(Unassigned)'}
                           </option>
                         );
                       })}
                     </select>
                   </div>
+
+                  {isAssigningReligiousStudies && (
+                    <div>
+                      <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
+                        Religious Studies Group
+                      </label>
+                      <select
+                        data-testid="assign-subj-religious-choice"
+                        value={assignSubjReligiousChoice}
+                        onChange={event => {
+                          const choice = event.target.value;
+                          if (choice === 'CRS' || choice === 'IRS') {
+                            setAssignSubjReligiousChoice(choice);
+                          }
+                        }}
+                        className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-bold text-slate-900"
+                      >
+                        <option value="CRS">Christian Religious Studies (CRS)</option>
+                        <option value="IRS">Islamic Religious Studies (IRS)</option>
+                      </select>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block font-bold text-slate-700 uppercase mb-1 text-[10px]">
@@ -2194,16 +2269,25 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                 </span>
                                 {(t.assignedSubjects || []).slice(0, 6).map(asg => {
                                   const secName = classSections.find(c => c.id === asg.sectionId)?.name || `Class #${asg.sectionId}`;
-                                  const subName = subjects.find(s => s.id === asg.subjectId)?.name || `Subject #${asg.subjectId}`;
+                                  const subject = subjects.find(s => s.id === asg.subjectId);
+                                  const needsReligiousGroup =
+                                    isReligiousStudiesSubject(subject) &&
+                                    !asg.religiousStudiesChoice;
+                                  const subName = getSubjectDisplayName(subject, asg.sectionId, asg.religiousStudiesChoice) || `Subject #${asg.subjectId}`;
                                   return (
                                     <span
-                                      key={`${asg.sectionId}-${asg.subjectId}`}
+                                      key={`${asg.sectionId}-${asg.subjectId}-${asg.religiousStudiesChoice || 'all'}`}
+                                      title={needsReligiousGroup
+                                        ? 'Legacy combined assignment: assign CRS or IRS explicitly to restore score access.'
+                                        : undefined}
                                       className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-semibold text-slate-700"
                                     >
-                                      <span>{subName} ({secName})</span>
+                                      <span>
+                                        {subName}{needsReligiousGroup ? ' — GROUP REQUIRED' : ''} ({secName})
+                                      </span>
                                       <button
                                         type="button"
-                                        onClick={() => removeSubjectFromTeacher(asg.sectionId, asg.subjectId, t.id)}
+                                        onClick={() => removeSubjectFromTeacher(asg.sectionId, asg.subjectId, t.id, asg.religiousStudiesChoice)}
                                         className="text-slate-400 hover:text-rose-600 ml-1 cursor-pointer"
                                         title="Remove Subject Assignment"
                                       >
@@ -2216,8 +2300,12 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                                   const remainingAssignments = (t.assignedSubjects || []).slice(6);
                                   const remainingSubjects = remainingAssignments.map(asg => {
                                     const secName = classSections.find(c => c.id === asg.sectionId)?.name || `Class #${asg.sectionId}`;
-                                    const subName = subjects.find(s => s.id === asg.subjectId)?.name || `Subject #${asg.subjectId}`;
-                                    return `${subName} (${secName})`;
+                                    const subject = subjects.find(s => s.id === asg.subjectId);
+                                    const needsReligiousGroup =
+                                      isReligiousStudiesSubject(subject) &&
+                                      !asg.religiousStudiesChoice;
+                                    const subName = getSubjectDisplayName(subject, asg.sectionId, asg.religiousStudiesChoice) || `Subject #${asg.subjectId}`;
+                                    return `${subName}${needsReligiousGroup ? ' — GROUP REQUIRED' : ''} (${secName})`;
                                   });
                                   return (
                                     <span
@@ -2933,6 +3021,14 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                     {index + 1}
                   </span>
                   <span className="font-semibold text-slate-800">{subject.name}</span>
+                  {Object.entries(subject.sectionNameOverrides || {}).map(([sectionId, displayName]) => (
+                    <span
+                      key={sectionId}
+                      className="ml-2 text-[10px] font-bold text-indigo-700"
+                    >
+                      {classSections.find(section => section.id === Number(sectionId))?.name || `Class #${sectionId}`}: {displayName}
+                    </span>
+                  ))}
                   <span className="ml-auto text-[10px] uppercase text-slate-400">{subject.code}</span>
                 </li>
               ))}
@@ -4569,7 +4665,10 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                   </p>
                 ) : (
                   <p className="leading-relaxed">
-                    <strong>{subjects.find(s => s.id === pendingReassignment.subjectId)?.name}</strong> in{' '}
+                    <strong>{getSubjectDisplayName(
+                      subjects.find(s => s.id === pendingReassignment.subjectId),
+                      pendingReassignment.sectionId
+                    )}</strong> in{' '}
                     <strong>{classSections.find(s => s.id === pendingReassignment.sectionId)?.name}</strong> is currently assigned to{' '}
                     <strong className="underline">{pendingReassignment.currentHolderName}</strong>. Do you want to reassign this subject to{' '}
                     <strong className="text-indigo-900">{pendingReassignment.newTeacherName}</strong>?

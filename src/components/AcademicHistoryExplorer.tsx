@@ -6,6 +6,10 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName
+} from '../utils/subjectDisplay';
+import {
   History,
   Building,
   Calendar,
@@ -189,7 +193,11 @@ export const AcademicHistoryExplorer: React.FC = () => {
           const match =
             st.fullName.toLowerCase().includes(q) ||
             st.admissionNumber.toLowerCase().includes(q) ||
-            sub.name.toLowerCase().includes(q) ||
+            getSubjectDisplayName(
+              sub,
+              sec.id,
+              getStudentReligiousStudiesChoice(st, targetArchive.sessionId)
+            ).toLowerCase().includes(q) ||
             sec.name.toLowerCase().includes(q) ||
             staffLabel.toLowerCase().includes(q);
           if (!match) return;
@@ -209,7 +217,11 @@ export const AcademicHistoryExplorer: React.FC = () => {
           sectionId: sec.id,
           sectionName: sec.name,
           subjectId: sub.id,
-          subjectName: sub.name,
+          subjectName: getSubjectDisplayName(
+            sub,
+            sec.id,
+            getStudentReligiousStudiesChoice(st, targetArchive.sessionId)
+          ),
           staffName: staffLabel,
           ca1Score: Number(rec.ca1Score ?? 0),
           ca2Score: Number(rec.ca2Score ?? 0),
@@ -521,7 +533,10 @@ export const AcademicHistoryExplorer: React.FC = () => {
               <option value="ALL">All Subjects ({subjects.length})</option>
               {subjects.map(sub => (
                 <option key={sub.id} value={sub.id}>
-                  {sub.name}
+                  {getSubjectDisplayName(
+                    sub,
+                    selectedClassFilter === 'ALL' ? undefined : Number(selectedClassFilter)
+                  )}
                 </option>
               ))}
             </select>

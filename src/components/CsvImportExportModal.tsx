@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ClassSection, Subject, Student, AssessmentComponent } from '../types/index';
 import { useApp } from '../context/AppContext';
+import { getSubjectDisplayName } from '../utils/subjectDisplay';
 import {
   parseBulkCsvWithSubjectInclusion,
   buildCsvImportedSubject,
@@ -137,7 +138,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
         `"${st.fullName}"`,
         `"${st.admissionNumber}"`,
         `"${st.gender}"`,
-        `"${subject.name}"`,
+        `"${getSubjectDisplayName(subject, section.id)}"`,
         `include=${isIncluded ? 'true' : 'false'}`
       ];
 
@@ -158,7 +159,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
     link.setAttribute('href', csvContent);
     link.setAttribute(
       'download',
-      `${section.name.replace(/\s+/g, '_')}_${subject.name.replace(/\s+/g, '_')}_Scores.csv`
+      `${section.name.replace(/\s+/g, '_')}_${getSubjectDisplayName(subject, section.id).replace(/\s+/g, '_')}_Scores.csv`
     );
     document.body.appendChild(link);
     link.click();
@@ -177,9 +178,9 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
     ];
     const sampleRows = [
       headers.join(','),
-      `"Sample Student One","STU-2026-0401","MALE","${subject.name}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`,
+      `"Sample Student One","STU-2026-0401","MALE","${getSubjectDisplayName(subject, section.id)}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`,
       `"Sample Student One","STU-2026-0401","MALE","MATHEMATICS",include=true,${components.map(c => Math.min(c.maxScore, 4.5)).join(',')}`,
-      `"Sample Student Two","STU-2026-0402","FEMALE","${subject.name}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`
+      `"Sample Student Two","STU-2026-0402","FEMALE","${getSubjectDisplayName(subject, section.id)}",include=true,${components.map(c => Math.min(c.maxScore, 4)).join(',')}`
     ];
 
     const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(sampleRows.join('\n'));
@@ -199,7 +200,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
       headers.join(','),
       ...sampleStudents.map((st, idx) => {
         const incFlag = idx === 2 && section.levelType === 'SENIOR' ? 'include=false' : 'include=true';
-        return `"${st.fullName}","${st.admissionNumber}","${st.gender}","${subject.name}",${incFlag},${components.map(c => Math.min(c.maxScore, 4)).join(',')}`;
+        return `"${st.fullName}","${st.admissionNumber}","${st.gender}","${getSubjectDisplayName(subject, section.id)}",${incFlag},${components.map(c => Math.min(c.maxScore, 4)).join(',')}`;
       })
     ];
     setCsvText(lines.join('\n'));
@@ -215,14 +216,14 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
           ? Math.min(c.maxScore, 14 + (idx % 6))
           : Math.min(c.maxScore, 3 + (idx % 3))
       );
-      return `"${st.fullName}","${st.admissionNumber}","${st.gender}","${subject.name}",${incFlag},${scoresList.join(',')}`;
+      return `"${st.fullName}","${st.admissionNumber}","${st.gender}","${getSubjectDisplayName(subject, section.id)}",${incFlag},${scoresList.join(',')}`;
     });
 
     const extraRows = [
-      `"Sample Student One","STU-2026-9901","MALE","${subject.name}",include=true,${components
+      `"Sample Student One","STU-2026-9901","MALE","${getSubjectDisplayName(subject, section.id)}",include=true,${components
         .map(c => (c.shortCode.toUpperCase() === 'TEST' ? Math.min(c.maxScore, 18) : Math.min(c.maxScore, 4.5)))
         .join(',')}`,
-      `"Sample Student Two","STU-2026-9902","FEMALE","${subject.name}",include=true,${components
+      `"Sample Student Two","STU-2026-9902","FEMALE","${getSubjectDisplayName(subject, section.id)}",include=true,${components
         .map(c => (c.shortCode.toUpperCase() === 'TEST' ? Math.min(c.maxScore, 17) : Math.min(c.maxScore, 4)))
         .join(',')}`
     ];
@@ -257,7 +258,8 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
         defaultSubject: subject,
         components,
         defaultInclude: defaultIncludeSelectedSubject,
-        levelType: section.levelType
+        levelType: section.levelType,
+        sectionId: section.id
       });
     } catch (error) {
       setHasImportErrors(true);
@@ -354,20 +356,25 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
     const scoreErrors: string[] = [];
 
     const subjectCatalog = [...subjects];
-    const subjectsByName = new Map(
-      subjectCatalog
-        .filter(item =>
-          !item.applicableLevel ||
-          item.applicableLevel === 'BOTH' ||
-          item.applicableLevel === section.levelType
-        )
-        .map(item => [normalizeCsvSubjectLabel(item.name), item])
-    );
+    const subjectsByName = new Map<string, Subject>();
+    subjectCatalog
+      .filter(item =>
+        !item.applicableLevel ||
+        item.applicableLevel === 'BOTH' ||
+        item.applicableLevel === section.levelType
+      )
+      .forEach(item => {
+        subjectsByName.set(normalizeCsvSubjectLabel(item.name), item);
+        subjectsByName.set(
+          normalizeCsvSubjectLabel(getSubjectDisplayName(item, section.id)),
+          item
+        );
+      });
     const resolveSubjectId = (subjectName: string, subjectId: number): number => {
       if (subjectId !== 0) return subjectId;
       const normalizedName = normalizeCsvSubjectLabel(subjectName);
       const existing = subjectsByName.get(normalizedName) ||
-        findCsvSubjectMatch(subjectName, subjectCatalog, section.levelType);
+        findCsvSubjectMatch(subjectName, subjectCatalog, section.levelType, section.id);
       if (existing) {
         subjectsByName.set(normalizedName, existing);
         return existing.id;
@@ -523,7 +530,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               {section.name} ({students.length} Registered Students) • Active Subject:{' '}
-              <strong>{subject.name}</strong>
+              <strong>{getSubjectDisplayName(subject, section.id)}</strong>
             </p>
           </div>
           <button
@@ -583,7 +590,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
           <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
             <div>
               <span className="font-bold text-indigo-950 block">
-                Selected Subject Inclusion ({subject.name})
+                Selected Subject Inclusion ({getSubjectDisplayName(subject, section.id)})
               </span>
               <span className="text-[11px] text-indigo-700">
                 Use <code className="font-mono font-bold">include=true</code> or{' '}
@@ -637,7 +644,7 @@ export const CsvImportExportModal: React.FC<CsvImportExportModalProps> = ({
               rows={5}
               value={csvText}
               onChange={(e) => setCsvText(e.target.value)}
-              placeholder={`Student Name,Admission Number,Gender,Subject,Include,${components.map(c => c.shortCode).join(',')}\n"Sample Student One","STU-2026-0401","MALE","${subject.name}",include=true,${components.map(() => '4.0').join(',')}\n"Sample Student Two","STU-2026-0402","FEMALE","${subject.name}",include=false,${components.map(() => '0.0').join(',')}`}
+              placeholder={`Student Name,Admission Number,Gender,Subject,Include,${components.map(c => c.shortCode).join(',')}\n"Sample Student One","STU-2026-0401","MALE","${getSubjectDisplayName(subject, section.id)}",include=true,${components.map(() => '4.0').join(',')}\n"Sample Student Two","STU-2026-0402","FEMALE","${getSubjectDisplayName(subject, section.id)}",include=false,${components.map(() => '0.0').join(',')}`}
               className="w-full p-3 font-mono text-xs bg-slate-50 border border-slate-300 rounded-xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <button

@@ -7,6 +7,13 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { CustomReportColumn, CustomReportTemplate } from '../types/index';
 import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
+import { hasAllSubjectsClearance } from '../utils/rbacAndAuth';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
+import {
   determineGrade,
   resolveActiveGradingScaleBands,
   getReportCardGradingScaleDisplay
@@ -76,6 +83,9 @@ export const CustomReportSheetView: React.FC = () => {
   const {
     schoolProfile,
     currentSession,
+    currentRole,
+    currentUser,
+    teachers,
     currentTerm,
     classSections,
     subjects,
@@ -103,6 +113,7 @@ export const CustomReportSheetView: React.FC = () => {
     () => classSections.find(s => s.id === selectedSectionId) || classSections[0],
     [classSections, selectedSectionId]
   );
+  const activeTeacher = findTeacherForUser(teachers, currentUser);
 
   const applicableSubjects = useMemo(() => {
     if (!activeSection) return subjects;
@@ -358,6 +369,10 @@ export const CustomReportSheetView: React.FC = () => {
     if (!previewStudent) return [];
     const levelType = previewStudentSection?.levelType || 'SENIOR';
     const isJunior = levelType === 'JUNIOR';
+    const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+      previewStudent,
+      currentSession.id
+    );
     const customScoresMap = currentTemplate.studentCustomScores || {};
 
     return applicableSubjects
@@ -366,7 +381,20 @@ export const CustomReportSheetView: React.FC = () => {
         const enr = enrollments.find(
           e => e.studentId === previewStudent.id && e.subjectId === sub.id
         );
-        return isJunior ? true : enr ? enr.isIncluded : true;
+        return isReligiousStudiesSubject(sub)
+          ? religiousStudiesChoice !== undefined &&
+            (hasAllSubjectsClearance(currentRole) ||
+              hasTeacherSubjectAssignment(
+                activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                previewStudentSection?.id || -1,
+                sub.id,
+                religiousStudiesChoice
+              ))
+          : isJunior
+          ? true
+          : enr
+          ? enr.isIncluded
+          : true;
       })
       .map(sub => {
         const rec = termSubjectRecords.find(
@@ -405,6 +433,11 @@ export const CustomReportSheetView: React.FC = () => {
 
         return {
           subject: sub,
+          subjectDisplayName: getSubjectDisplayName(
+            sub,
+            previewStudentSection?.id,
+            isReligiousStudiesSubject(sub) ? religiousStudiesChoice : undefined
+          ),
           colValues,
           rawSum,
           normalizedPct,
@@ -417,6 +450,10 @@ export const CustomReportSheetView: React.FC = () => {
     previewStudentSection,
     currentTemplate.id,
     currentTemplate.studentCustomScores,
+    currentSession.id,
+    currentRole,
+    activeTeacher,
+    currentUser,
     applicableSubjects,
     selectedSubjectIds,
     enrollments,
@@ -872,7 +909,7 @@ export const CustomReportSheetView: React.FC = () => {
                   ) : (
                     <Square className="w-4 h-4 text-slate-400 shrink-0" />
                   )}
-                  <span className="truncate">{sub.name}</span>
+                  <span className="truncate">{getSubjectDisplayName(sub, activeSection?.id)}</span>
                 </button>
               );
             })}
@@ -1022,7 +1059,7 @@ export const CustomReportSheetView: React.FC = () => {
                   {studentSubjectRows.map(row => (
                     <tr key={row.subject.id} className="odd:bg-white even:bg-slate-50">
                       <td className="border border-slate-400 py-1.5 px-3 font-bold text-slate-900">
-                        {row.subject.name}
+                        {row.subjectDisplayName}
                       </td>
                       {row.colValues.map(cell => (
                         <td

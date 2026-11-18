@@ -1,4 +1,11 @@
-import type { ClassSection, Subject, TeacherSubjectAssignment, UserRole } from '../types/index';
+import type {
+  ClassSection,
+  ReligiousStudiesChoice,
+  Subject,
+  TeacherSubjectAssignment,
+  UserRole
+} from '../types/index';
+import { RELIGIOUS_STUDIES_SUBJECT_ID } from './subjectDisplay';
 
 type TeacherAssignmentSnapshot = {
   teachers: readonly {
@@ -13,7 +20,12 @@ export interface TeacherSubjectAssignmentIssue {
   teacherId: number;
   sectionId: number;
   subjectId: number;
-  reason: 'section-not-found' | 'subject-not-found' | 'level-mismatch';
+  reason:
+    | 'section-not-found'
+    | 'subject-not-found'
+    | 'level-mismatch'
+    | 'religious-choice-required'
+    | 'invalid-religious-choice';
 }
 
 export function findTeacherForUser<T extends { id: number; username?: string }>(
@@ -60,10 +72,17 @@ function getInvalidTeacherSubjectAssignments(
       const subjectId = Number(assignment.subjectId);
       const section = sections.get(sectionId);
       const subject = subjects.get(subjectId);
+      const religiousChoice = assignment.religiousStudiesChoice as string | undefined;
       const reason = !Number.isSafeInteger(sectionId) || sectionId <= 0 || !section
         ? 'section-not-found'
         : !Number.isSafeInteger(subjectId) || subjectId <= 0 || !subject
           ? 'subject-not-found'
+          : subjectId === RELIGIOUS_STUDIES_SUBJECT_ID &&
+            religiousChoice !== 'CRS' &&
+            religiousChoice !== 'IRS'
+            ? religiousChoice === undefined
+              ? 'religious-choice-required'
+              : 'invalid-religious-choice'
           : isSubjectApplicableToSection(subject, section)
             ? undefined
             : 'level-mismatch';
@@ -128,6 +147,21 @@ export function resolveTeacherScoreSelection(
       Number(assignment.sectionId) === Number(currentSectionId) &&
       Number(assignment.subjectId) === Number(currentSubjectId)
   ) || validAssignments[0];
+}
+
+export function hasTeacherSubjectAssignment(
+  assignments: readonly TeacherSubjectAssignment[] | undefined,
+  sectionId: number,
+  subjectId: number,
+  religiousStudiesChoice?: ReligiousStudiesChoice
+): boolean {
+  return (assignments || []).some(assignment =>
+    Number(assignment.sectionId) === Number(sectionId) &&
+    Number(assignment.subjectId) === Number(subjectId) &&
+    (Number(subjectId) !== RELIGIOUS_STUDIES_SUBJECT_ID ||
+      (religiousStudiesChoice !== undefined &&
+        assignment.religiousStudiesChoice === religiousStudiesChoice))
+  );
 }
 
 export function getStaffVisibleToUser<T extends { id: number; username?: string }>(

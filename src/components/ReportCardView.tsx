@@ -22,10 +22,19 @@ import {
 } from '../utils/reportCardCalculations';
 import {
   canPrintReportCards,
+  hasAllSubjectsClearance,
   resolveInstitutionLogoUrl,
   DEFAULT_INSTITUTION_LOGO_DATA_URI
 } from '../utils/rbacAndAuth';
-import { findTeacherForUser } from '../utils/staffRolePolicy';
+import {
+  findTeacherForUser,
+  hasTeacherSubjectAssignment
+} from '../utils/staffRolePolicy';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
 import {
   Printer,
   ChevronLeft,
@@ -74,6 +83,7 @@ export const ReportCardView: React.FC = () => {
     updateRemarks,
     currentTerm,
     setCurrentTerm,
+    currentSession,
     terms,
     activeReportType,
     setActiveReportType,
@@ -299,12 +309,24 @@ export const ReportCardView: React.FC = () => {
             e.subjectId === sub.id &&
             e.sectionId === selectedSectionId
         );
-        const isIncluded =
-          currentSection.levelType === 'JUNIOR'
-            ? true
-            : enr !== undefined
-            ? enr.isIncluded
-            : true;
+        const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+          targetStudent,
+          currentSession.id
+        );
+        const isIncluded = isReligiousStudiesSubject(sub)
+          ? religiousStudiesChoice !== undefined &&
+            (hasAllSubjectsClearance(currentRole) ||
+              hasTeacherSubjectAssignment(
+                activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+                selectedSectionId,
+                sub.id,
+                religiousStudiesChoice
+              ))
+          : currentSection.levelType === 'JUNIOR'
+          ? true
+          : enr !== undefined
+          ? enr.isIncluded
+          : true;
 
         const baseCompScores: Record<number, number | null> = {};
 
@@ -477,6 +499,11 @@ export const ReportCardView: React.FC = () => {
 
         return {
           subject: sub,
+          subjectDisplayName: getSubjectDisplayName(
+            sub,
+            currentSection.id,
+            isReligiousStudiesSubject(sub) ? religiousStudiesChoice : undefined
+          ),
           isIncluded,
           compScores,
           rawTotal,
@@ -824,7 +851,7 @@ export const ReportCardView: React.FC = () => {
                       <tr key={row.subject.id} className="divide-x divide-slate-900 font-medium">
                         <td className="py-1.5 px-1 text-center font-mono">{idx + 1}</td>
                         <td className="py-1.5 px-3 font-bold uppercase text-slate-900">
-                          {row.subject.name}
+                          {row.subjectDisplayName}
                         </td>
                         {colVals.map((v, cIdx) => (
                           <td key={customCols[cIdx].id} className="py-1.5 px-2 text-center font-mono">
@@ -932,7 +959,7 @@ export const ReportCardView: React.FC = () => {
                     >
                       <td className="py-1.5 px-1 text-center font-mono text-[13px]">{idx + 1}</td>
                       <td className="py-1.5 px-3 font-bold uppercase text-slate-900 text-[13px]">
-                        {row.subject.name}
+                        {row.subjectDisplayName}
                       </td>
                       {activeReportType === 'MID_TERM' && (
                         <>

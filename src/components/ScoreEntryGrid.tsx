@@ -27,7 +27,12 @@ import {
   hasAllSubjectsClearance,
   getTeacherAssignedSubjectIdsForSection
 } from '../utils/rbacAndAuth';
-import { findTeacherForUser } from '../utils/staffRolePolicy';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
+import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
 import {
   Search,
   CheckCircle2,
@@ -74,6 +79,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
     termSubjectRecords,
     updateTermSubjectScore,
     currentTerm,
+    currentSession,
     setCurrentTerm,
     terms,
     lastAutoSavedTime,
@@ -205,7 +211,22 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       activeTeacherAssignedSubjects,
       selectedSectionId
     );
-    return levelSubjects.filter(sub => assignedIdsForClass.includes(Number(sub.id)));
+    return levelSubjects.filter(sub =>
+      assignedIdsForClass.includes(Number(sub.id)) &&
+      (!isReligiousStudiesSubject(sub) ||
+        hasTeacherSubjectAssignment(
+          activeTeacherAssignedSubjects,
+          selectedSectionId,
+          sub.id,
+          'CRS'
+        ) ||
+        hasTeacherSubjectAssignment(
+          activeTeacherAssignedSubjects,
+          selectedSectionId,
+          sub.id,
+          'IRS'
+        ))
+    );
   }, [subjects, isSenior, fullSubjectClearance, activeTeacherAssignedSubjects, selectedSectionId]);
 
   const currentSubject = useMemo(() => {
@@ -214,6 +235,25 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       subjects[0] ||
       { id: 0, name: '', code: '', category: 'CORE' as const };
   }, [availableSubjects, selectedSubjectId, subjects]);
+
+  const religiousStudiesChoicesForCurrentSubject = useMemo(
+    () => fullSubjectClearance
+      ? ['CRS', 'IRS'] as const
+      : (['CRS', 'IRS'] as const).filter(choice =>
+          hasTeacherSubjectAssignment(
+            activeTeacherAssignedSubjects,
+            selectedSectionId,
+            currentSubject.id,
+            choice
+          )
+        ),
+    [fullSubjectClearance, activeTeacherAssignedSubjects, selectedSectionId, currentSubject.id]
+  );
+  const currentSubjectReligiousChoice =
+    isReligiousStudiesSubject(currentSubject) &&
+    religiousStudiesChoicesForCurrentSubject.length === 1
+      ? religiousStudiesChoicesForCurrentSubject[0]
+      : undefined;
 
   // Components for this section's level
   const activeComponents = useMemo(() => {
@@ -324,8 +364,38 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
 
   // Students in current section
   const sectionStudents = useMemo(() => {
-    return students.filter(st => Number(st.currentSectionId) === Number(selectedSectionId));
-  }, [students, selectedSectionId]);
+    const classStudents = students.filter(
+      student => Number(student.currentSectionId) === Number(selectedSectionId)
+    );
+    const scopedSubject = ledgerMode === 'custom_report' ? activeCustomSubject : currentSubject;
+    if (
+      fullSubjectClearance ||
+      !isReligiousStudiesSubject(scopedSubject)
+    ) return classStudents;
+    const allowedChoices = fullSubjectClearance
+      ? ['CRS', 'IRS']
+      : (['CRS', 'IRS'] as const).filter(choice =>
+          hasTeacherSubjectAssignment(
+            activeTeacherAssignedSubjects,
+            selectedSectionId,
+            scopedSubject.id,
+            choice
+          )
+        );
+    return classStudents.filter(student => {
+      const choice = getStudentReligiousStudiesChoice(student, currentSession.id);
+      return choice !== undefined && allowedChoices.includes(choice);
+    });
+  }, [
+    students,
+    selectedSectionId,
+    fullSubjectClearance,
+    ledgerMode,
+    activeCustomSubject,
+    currentSubject,
+    currentSession.id,
+    activeTeacherAssignedSubjects
+  ]);
 
   // Filtered by search and arranged according to active alphabetical / admission sort mode
   const filteredStudents = useMemo(() => {
@@ -345,7 +415,13 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       const enrollment = customEnrollmentLookup.get(
         `${student.id}_${subject.id}_${selectedSectionId}`
       );
-      const included = currentSection.levelType === 'JUNIOR' || !enrollment || enrollment.isIncluded;
+      const religiousStudiesChoice = getStudentReligiousStudiesChoice(
+        student,
+        currentSession.id
+      );
+      const included = isReligiousStudiesSubject(subject)
+        ? religiousStudiesChoice !== undefined
+        : currentSection.levelType === 'JUNIOR' || !enrollment || enrollment.isIncluded;
       const termRecord = customTermRecordLookup.get(`${student.id}_${subject.id}`);
       const customScores = activeCustomTemplate.studentCustomScores?.[
         `${student.id}_${subject.id}`
@@ -365,12 +441,23 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
         customReportGradingBands
       );
       const studentRows = [{ subject, columnScores, total, percentage, grade, included }];
-      return { student, subjects: studentRows };
+      return {
+        student,
+        subjects: studentRows.map(row => ({
+          ...row,
+          subjectDisplayName: getSubjectDisplayName(
+            row.subject,
+            currentSection.id,
+            isReligiousStudiesSubject(row.subject) ? religiousStudiesChoice : undefined
+          )
+        }))
+      };
     });
   }, [
     activeCustomTemplate,
     activeCustomSubject,
     currentSection.levelType,
+    currentSession.id,
     filteredStudents,
     customEnrollmentLookup,
     customTermRecordLookup,
@@ -449,6 +536,10 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
 
   // Check if subject is included for this student (Junior: all subjects are Core!)
   const isSubjectIncluded = (studentId: number): boolean => {
+    if (isReligiousStudiesSubject(currentSubject)) {
+      const student = students.find(item => Number(item.id) === Number(studentId));
+      return getStudentReligiousStudiesChoice(student, currentSession.id) !== undefined;
+    }
     if (!isSenior) return true;
     const enr = enrollments.find(
       e => e.studentId === studentId && e.subjectId === currentSubject.id && e.sectionId === selectedSectionId
@@ -844,7 +935,11 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                   <div className="break-words text-[clamp(1rem,4vw,1.875rem)] font-black tracking-tight text-indigo-950 leading-tight [overflow-wrap:anywhere]">
                     {ledgerMode === 'custom_report'
                       ? activeCustomSubject?.name || activeCustomTemplate?.title || 'Select a custom report'
-                      : currentSubject.name}
+                      : getSubjectDisplayName(
+                          currentSubject,
+                          currentSection.id,
+                          currentSubjectReligiousChoice
+                        )}
                   </div>
                 </div>
               </div>
@@ -1037,7 +1132,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
             >
               {(ledgerMode === 'custom_report' ? customSubjectOptions : availableSubjects).map(sub => (
                 <option key={sub.id} value={sub.id}>
-                  {sub.name} {isSenior ? `(${sub.category})` : ''}
+                  {getSubjectDisplayName(sub, currentSection.id)} {isSenior ? `(${sub.category})` : ''}
                 </option>
               ))}
             </select>
@@ -1161,7 +1256,11 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
               </span>
             ) : (
               <span className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-sm font-black uppercase shadow-2xs">
-                {currentSubject.name}
+                {getSubjectDisplayName(
+                  currentSubject,
+                  currentSection.id,
+                  currentSubjectReligiousChoice
+                )}
               </span>
             )}
             <span className="text-slate-300">•</span>
@@ -1299,7 +1398,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                         {(customRowsByStudent.get(st.id) || []).map(row => (
                           <section key={row.subject.id} className="rounded-xl border border-amber-200 bg-amber-50/40 p-3">
                             <div className="mb-2 flex items-center justify-between gap-2">
-                              <h4 className="text-xs font-black uppercase text-slate-800">{row.subject.name}</h4>
+                              <h4 className="text-xs font-black uppercase text-slate-800">{row.subjectDisplayName}</h4>
                               <div className="flex items-center gap-2">
                                 {isSenior && (
                                   <button
@@ -1343,7 +1442,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                                         column.maxScore,
                                         event.target.value
                                       )}
-                                      aria-label={`${st.fullName} ${row.subject.name} ${column.header}`}
+                                      aria-label={`${st.fullName} ${row.subjectDisplayName} ${column.header}`}
                                       className={`w-full rounded-md border px-2 py-1.5 text-center font-mono text-sm font-bold ${
                                         error ? 'border-rose-500 bg-rose-50 text-rose-900' : 'border-slate-300'
                                       }`}
@@ -1755,7 +1854,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                                   column.maxScore,
                                   event.target.value
                                 )}
-                                aria-label={`${studentRow.student.fullName} ${row.subject.name} ${column.header}`}
+                                aria-label={`${studentRow.student.fullName} ${row.subjectDisplayName} ${column.header}`}
                                 className={`w-20 rounded-lg border px-2 py-1.5 text-center font-mono font-bold ${
                                   error
                                     ? 'border-rose-500 bg-rose-50 text-rose-900'
@@ -2082,7 +2181,11 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
                 </div>
                 <h3 className="text-base font-bold text-white">{subScoreModal.student.fullName}</h3>
                 <p className="text-xs text-slate-300 font-semibold">
-                  {currentSubject.name} • {currentTerm.name} TERM
+                  {getSubjectDisplayName(
+                    currentSubject,
+                    currentSection.id,
+                    currentSubjectReligiousChoice
+                  )} • {currentTerm.name} TERM
                 </p>
               </div>
               <button

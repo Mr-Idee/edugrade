@@ -6,6 +6,7 @@
 import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, StudentTestimonial } from '../types/index';
+import { getSubjectDisplayName } from '../utils/subjectDisplay';
 import {
   DEFAULT_INSTITUTION_LOGO_DATA_URI,
   resolveInstitutionLogoUrl,
@@ -53,7 +54,17 @@ export const SchoolTestimonialModal: React.FC<SchoolTestimonialModalProps> = ({
   // Retrieve or synthesize the student's testimonial record
   const testimonial: StudentTestimonial = useMemo(() => {
     const existing = studentTestimonials.find(t => t.studentId === student.id);
-    if (existing) return existing;
+    if (existing) {
+      return {
+        ...existing,
+        subjectsStudied: existing.subjectsStudied.map(subjectName => {
+          const subject = subjects.find(
+            item => item.name.trim().toLowerCase() === subjectName.trim().toLowerCase()
+          );
+          return getSubjectDisplayName(subject, section?.id) || subjectName;
+        })
+      };
+    }
 
     const stEnrollments = enrollments.filter(e => e.studentId === student.id && e.isIncluded);
     const stSubjects = subjects
@@ -62,7 +73,7 @@ export const SchoolTestimonialModal: React.FC<SchoolTestimonialModalProps> = ({
           ? stEnrollments.some(e => e.subjectId === sub.id)
           : sub.applicableLevel === 'SENIOR' || sub.applicableLevel === 'BOTH'
       )
-      .map(s => s.name);
+      .map(subject => getSubjectDisplayName(subject, section?.id));
 
     return generateStudentTestimonialRecord({
       student,
@@ -128,7 +139,7 @@ export const SchoolTestimonialModal: React.FC<SchoolTestimonialModalProps> = ({
       const finalGrade = t3?.grade || t2?.grade || t1?.grade || (avg >= 75 ? 'A1' : avg >= 65 ? 'B' : avg >= 50 ? 'C' : avg > 0 ? 'D' : '-');
       return {
         subjectId: sub.id,
-        subjectName: sub.name,
+        subjectName: getSubjectDisplayName(sub, section?.id),
         code: sub.code,
         t1Score: t1?.totalScore ?? 0,
         t2Score: t2?.totalScore ?? 0,
@@ -137,7 +148,7 @@ export const SchoolTestimonialModal: React.FC<SchoolTestimonialModalProps> = ({
         grade: finalGrade
       };
     });
-  }, [enrollments, student.id, subjects, termSubjectRecords]);
+  }, [enrollments, section?.id, student.id, subjects, termSubjectRecords]);
 
   // Star border array for top/bottom & left/right decorative frame matching reference image
   const topBottomStars = Array.from({ length: 18 });

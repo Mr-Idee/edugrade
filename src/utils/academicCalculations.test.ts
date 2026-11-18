@@ -307,6 +307,42 @@ test('auditClassStudentCompleteness treats 0 as a valid entered score and only f
     sectionId: 1
   });
 
+  test('Junior completeness audit includes only a student selected CRS or IRS alongside compulsory subjects', () => {
+    const audit = auditClassStudentCompleteness({
+      students: [
+        {
+          id: 1,
+          fullName: 'Selected',
+          admissionNumber: 'A1',
+          gender: 'FEMALE',
+          religiousStudiesChoiceBySession: { '9': 'CRS' }
+        },
+        {
+          id: 2,
+          fullName: 'Not Selected',
+          admissionNumber: 'A2',
+          gender: 'MALE'
+        }
+      ],
+      levelType: 'JUNIOR',
+      applicableSubjects: [
+        { id: 35, name: 'CRS/IRS', code: 'CRS' },
+        { id: 36, name: 'Mathematics', code: 'MATH' }
+      ],
+      components: [],
+      enrollments: [],
+      scores: [],
+      sectionId: 7,
+      sessionId: 9
+    });
+
+    assert.deepEqual(audit[0].includedSubjectNames, [
+      'CHRISTIAN RELIGIOUS STUDIES',
+      'Mathematics'
+    ]);
+    assert.deepEqual(audit[1].includedSubjectNames, ['Mathematics']);
+  });
+
   assert.equal(audit.length, 2);
 
   // Alice: 3 included, 3 completed, 0 missing (even though she scored 0 in Quiz and 0 in Physics!)

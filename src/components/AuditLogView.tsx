@@ -15,6 +15,7 @@ import {
 } from '../utils/pdfGenerator';
 import { resolveScoreAuditStudentName } from '../utils/scoreAudit';
 import { canPrintOrDownload } from '../utils/rbacAndAuth';
+import { getSubjectDisplayName } from '../utils/subjectDisplay';
 import {
   Search,
   Download,
@@ -122,7 +123,8 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ onOpenScoreGrid }) =
       components: activeComponents,
       enrollments,
       scores,
-      sectionId: selectedSectionId
+      sectionId: selectedSectionId,
+      sessionId: currentSession.id
     });
   }, [
     sectionStudents,
@@ -131,7 +133,8 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ onOpenScoreGrid }) =
     activeComponents,
     enrollments,
     scores,
-    selectedSectionId
+    selectedSectionId,
+    currentSession.id
   ]);
 
   // Filtered completeness rows
@@ -176,10 +179,14 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ onOpenScoreGrid }) =
     return auditLogs
       .filter(log => {
         const studentName = resolveScoreAuditStudentName(log, students);
+        const subjectName = getSubjectDisplayName(
+          subjects.find(subject => subject.id === log.subjectId),
+          students.find(student => student.id === log.studentId)?.currentSectionId
+        ) || log.subjectName;
         const matchesSearch =
           studentName.toLowerCase().includes(search.toLowerCase()) ||
           log.studentName.toLowerCase().includes(search.toLowerCase()) ||
-          log.subjectName.toLowerCase().includes(search.toLowerCase()) ||
+          subjectName.toLowerCase().includes(search.toLowerCase()) ||
           log.changedBy.toLowerCase().includes(search.toLowerCase()) ||
           log.changeReason.toLowerCase().includes(search.toLowerCase());
 
@@ -188,9 +195,13 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({ onOpenScoreGrid }) =
       })
       .map(log => ({
         ...log,
-        studentName: resolveScoreAuditStudentName(log, students)
+        studentName: resolveScoreAuditStudentName(log, students),
+        subjectName: getSubjectDisplayName(
+          subjects.find(subject => subject.id === log.subjectId),
+          students.find(student => student.id === log.studentId)?.currentSectionId
+        ) || log.subjectName
       }));
-  }, [auditLogs, students, search, selectedRole]);
+  }, [auditLogs, students, subjects, search, selectedRole]);
 
   const handleDownloadCompletenessPdf = () => {
     downloadClassCompletenessAuditPdf({

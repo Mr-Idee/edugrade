@@ -19,6 +19,8 @@ export type RemarkType = 'PRINCIPAL' | 'TEACHER';
 
 export type LevelType = 'JUNIOR' | 'SENIOR';
 
+export type ReligiousStudiesChoice = 'CRS' | 'IRS';
+
 export type ReportType = 'MID_TERM' | 'EXAM_TERM' | 'ANNUAL';
 
 export type ReportCardSubjectOrder = Record<LevelType, number[]>;
@@ -82,6 +84,7 @@ export interface ClassSection {
 export interface TeacherSubjectAssignment {
   sectionId: number;
   subjectId: number;
+  religiousStudiesChoice?: ReligiousStudiesChoice;
 }
 
 export interface Teacher {
@@ -144,6 +147,7 @@ export interface Student {
   recordSignature?: string; // e.g. 'GRADUATED'
   graduatedSessionName?: string;
   graduatedAt?: string;
+  religiousStudiesChoiceBySession?: Record<string, ReligiousStudiesChoice>;
 }
 
 export interface Subject {
@@ -152,6 +156,7 @@ export interface Subject {
   code: string;
   category: SubjectCategory;
   applicableLevel?: LevelType | 'BOTH';
+  sectionNameOverrides?: Record<string, string>;
 }
 
 export interface AssessmentComponent {

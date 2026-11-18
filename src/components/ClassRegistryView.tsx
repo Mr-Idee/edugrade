@@ -7,6 +7,13 @@ import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import { Student, TermName, CaSubScoreDetails } from '../types/index';
 import {
+  getStudentReligiousStudiesChoice,
+  getSubjectDisplayName,
+  isReligiousStudiesSubject
+} from '../utils/subjectDisplay';
+import { hasAllSubjectsClearance } from '../utils/rbacAndAuth';
+import { findTeacherForUser, hasTeacherSubjectAssignment } from '../utils/staffRolePolicy';
+import {
   FileSpreadsheet,
   PlusCircle,
   Edit2,
@@ -42,9 +49,13 @@ export const ClassRegistryView: React.FC<ClassRegistryViewProps> = ({ onOpenRepo
     termSubjectRecords,
     updateTermSubjectScore,
     currentTerm,
+    currentSession,
     setCurrentTerm,
     terms,
-    lastAutoSavedTime
+    lastAutoSavedTime,
+    currentRole,
+    currentUser,
+    teachers
   } = useApp();
 
   const [search, setSearch] = useState('');
@@ -75,23 +86,61 @@ export const ClassRegistryView: React.FC<ClassRegistryViewProps> = ({ onOpenRepo
 
   // Applicable subjects for this level
   const applicableSubjects = useMemo(() => {
-    return subjects.filter(sub => {
+    const levelSubjects = subjects.filter(sub => {
       if (isSenior) {
         return sub.applicableLevel === 'SENIOR' || sub.applicableLevel === 'BOTH';
       } else {
         return sub.applicableLevel === 'JUNIOR' || sub.applicableLevel === 'BOTH';
       }
     });
-  }, [subjects, isSenior]);
+    if (hasAllSubjectsClearance(currentRole)) return levelSubjects;
+    const teacher = findTeacherForUser(teachers, currentUser);
+    const assignments = teacher?.assignedSubjects || currentUser.assignedSubjects;
+    return levelSubjects.filter(
+      subject =>
+        !isReligiousStudiesSubject(subject) ||
+        hasTeacherSubjectAssignment(assignments, selectedSectionId, subject.id, 'CRS') ||
+        hasTeacherSubjectAssignment(assignments, selectedSectionId, subject.id, 'IRS')
+    );
+  }, [subjects, isSenior, currentRole, teachers, currentUser, selectedSectionId]);
 
   const currentSubject = useMemo(() => {
     return applicableSubjects.find(s => s.id === selectedSubjectId) || applicableSubjects[0] || subjects[0];
   }, [applicableSubjects, selectedSubjectId, subjects]);
+  const activeTeacher = findTeacherForUser(teachers, currentUser);
+  const assignedReligiousChoices = (['CRS', 'IRS'] as const).filter(choice =>
+    hasTeacherSubjectAssignment(
+      activeTeacher?.assignedSubjects || currentUser.assignedSubjects,
+      selectedSectionId,
+      currentSubject?.id,
+      choice
+    )
+  );
+  const currentSubjectReligiousChoice =
+    isReligiousStudiesSubject(currentSubject) &&
+    !hasAllSubjectsClearance(currentRole) &&
+    assignedReligiousChoices.length === 1
+      ? assignedReligiousChoices[0]
+      : undefined;
 
   // Section students
   const sectionStudents = useMemo(() => {
-    return students.filter(st => st.currentSectionId === selectedSectionId);
-  }, [students, selectedSectionId]);
+    const classStudents = students.filter(st => st.currentSectionId === selectedSectionId);
+    if (hasAllSubjectsClearance(currentRole) || !isReligiousStudiesSubject(currentSubject)) {
+      return classStudents;
+    }
+    return classStudents.filter(student => {
+      const choice = getStudentReligiousStudiesChoice(student, currentSession.id);
+      return choice !== undefined && assignedReligiousChoices.includes(choice);
+    });
+  }, [
+    students,
+    selectedSectionId,
+    currentRole,
+    currentSubject,
+    currentSession.id,
+    assignedReligiousChoices
+  ]);
 
   const filteredStudents = useMemo(() => {
     if (!search.trim()) return sectionStudents;
@@ -309,7 +358,17 @@ export const ClassRegistryView: React.FC<ClassRegistryViewProps> = ({ onOpenRepo
               className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-indigo-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
             >
               {applicableSubjects.map(sub => (
-                <option key={sub.id} value={sub.id}>{sub.name}</option>
+                <option key={sub.id} value={sub.id}>
+                  {getSubjectDisplayName(
+                    sub,
+                    currentSection.id,
+                    isReligiousStudiesSubject(sub) &&
+                      !hasAllSubjectsClearance(currentRole) &&
+                      assignedReligiousChoices.length === 1
+                      ? assignedReligiousChoices[0]
+                      : undefined
+                  )}
+                </option>
               ))}
             </select>
           </div>
@@ -337,7 +396,13 @@ export const ClassRegistryView: React.FC<ClassRegistryViewProps> = ({ onOpenRepo
           <div className="flex items-center space-x-2 text-xs">
             <span className="font-bold text-slate-900">{currentSection.name}</span>
             <span className="text-slate-400">•</span>
-            <span className="font-semibold text-indigo-600">{currentSubject.name}</span>
+            <span className="font-semibold text-indigo-600">
+              {getSubjectDisplayName(
+                currentSubject,
+                currentSection.id,
+                currentSubjectReligiousChoice
+              )}
+            </span>
             <span className="text-slate-400">•</span>
             <span className="px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold uppercase">
               {currentTerm.name} TERM
@@ -592,7 +657,14 @@ export const ClassRegistryView: React.FC<ClassRegistryViewProps> = ({ onOpenRepo
                 </div>
                 <h3 className="text-base font-bold text-white">{subScoreModal.student.fullName}</h3>
                 <p className="text-xs text-slate-400">
-                  {currentSubject.name} • {currentTerm.name} TERM
+                  {getSubjectDisplayName(
+                    currentSubject,
+                    currentSection.id,
+                    getStudentReligiousStudiesChoice(
+                      subScoreModal.student,
+                      currentSession.id
+                    )
+                  )} • {currentTerm.name} TERM
                 </p>
               </div>
               <button

@@ -100,7 +100,7 @@ export const initialSubjects: Subject[] = [
   { "id": 3, "name": "ECONOMICS", "code": "ECON", "category": "CORE", "applicableLevel": "SENIOR" },
   { "id": 4, "name": "BIOLOGY", "code": "BIOL", "category": "CORE", "applicableLevel": "SENIOR" },
   { "id": 5, "name": "DIGITAL TECHNOLOGY", "code": "DIGI", "category": "CORE", "applicableLevel": "SENIOR" },
-  { "id": 6, "name": "CITIZENSHIP AND HERITAGE STUDIES", "code": "CITI", "category": "CORE", "applicableLevel": "SENIOR" },
+  { "id": 6, "name": "CITIZENSHIP AND HERITAGE STUDIES", "code": "CITI", "category": "CORE", "applicableLevel": "SENIOR", "sectionNameOverrides": { "11": "CIVIC EDUCATION" } },
   { "id": 7, "name": "CATERING CRAFT", "code": "CATE", "category": "OPTIONAL", "applicableLevel": "SENIOR" },
   { "id": 8, "name": "FURTHER MATHEMATICS", "code": "FURT", "category": "OPTIONAL", "applicableLevel": "SENIOR" },
   { "id": 9, "name": "VISUAL ART", "code": "VISU", "category": "OPTIONAL", "applicableLevel": "SENIOR" },
@@ -130,7 +130,7 @@ export const initialSubjects: Subject[] = [
   { "id": 33, "name": "PHE", "code": "PHE", "category": "CORE", "applicableLevel": "JUNIOR" },
   { "id": 34, "name": "CULTURAL AND CREATIVE ARTS", "code": "CULT", "category": "CORE", "applicableLevel": "JUNIOR" },
   { "id": 35, "name": "CRS/IRS", "code": "CRS", "category": "CORE", "applicableLevel": "JUNIOR" },
-  { "id": 36, "name": "FASHION DESIGN AND GARMENT MAKING", "code": "FASH", "category": "CORE", "applicableLevel": "JUNIOR" },
+  { "id": 36, "name": "FASHION DESIGN AND GARMENT MAKING", "code": "FASH", "category": "CORE", "applicableLevel": "JUNIOR", "sectionNameOverrides": { "6": "HOME ECONOMICS" } },
   { "id": 37, "name": "HAUSA", "code": "HAUS", "category": "CORE", "applicableLevel": "JUNIOR" },
   { "id": 38, "name": "MUSIC", "code": "MUSI", "category": "CORE", "applicableLevel": "JUNIOR" }
 ];
