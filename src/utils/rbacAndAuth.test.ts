@@ -103,7 +103,7 @@ test('Strict Role Switching & Subject Clearance Compliance', () => {
   assert.equal(hasAllSubjectsClearance('HEAD_OF_SCHOOLS'), true);
   assert.equal(hasAllSubjectsClearance('VICE_PRINCIPAL'), true);
 
-  // Class Teachers and Subject Teachers are restricted to their assigned subjects
+  // Subject selection remains assignment-scoped; report-card read visibility is scoped separately.
   assert.equal(hasAllSubjectsClearance('CLASS_TEACHER'), false);
   assert.equal(hasAllSubjectsClearance('SUBJECT_TEACHER'), false);
 

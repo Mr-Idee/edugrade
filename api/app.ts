@@ -29,8 +29,10 @@ import {
   preserveTeacherRemarksForSuperAdmin
 } from '../src/utils/studentCommentPolicy.ts';
 import {
+  canViewSubjectRecordInReport,
   canAssignStaffRole,
-  findNewInvalidTeacherSubjectAssignments
+  findNewInvalidTeacherSubjectAssignments,
+  isSubjectApplicableToSection
 } from '../src/utils/staffRolePolicy.ts';
 import {
   isDocumentInHodScope,
@@ -668,6 +670,29 @@ function filterSnapshotForStaff(
   const sections = snapshot.classSections.filter(section =>
     sectionIds.has(positiveId(section.id) || -1)
   );
+  const sectionById = new Map(sections.map(section => [positiveId(section.id) || -1, section]));
+  const subjectById = new Map(
+    snapshot.subjects.map(subject => [positiveId(subject.id) || -1, subject])
+  );
+  const canViewSubjectRecord = (sectionIdValue: unknown, subjectIdValue: unknown) => {
+    const sectionId = positiveId(sectionIdValue);
+    const subjectId = positiveId(subjectIdValue);
+    if (sectionId === undefined || subjectId === undefined || !sectionIds.has(sectionId)) return false;
+    return canViewSubjectRecordInReport(
+      identity.record.role,
+      sectionById.get(sectionId),
+      subjectById.get(subjectId),
+      canAccessSubject(sectionId, subjectId)
+    );
+  };
+  const reportSubjectIds = new Set(
+    identity.record.role === 'SUBJECT_TEACHER'
+      ? snapshot.subjects
+          .filter(subject => sections.some(section => isSubjectApplicableToSection(subject, section)))
+          .map(subject => positiveId(subject.id))
+          .filter((id): id is number => id !== undefined)
+      : []
+  );
   const customReportTemplates = (snapshot.customReportTemplates || [])
     .filter(template =>
       (template.sectionIds?.length ? template.sectionIds : [template.sectionId])
@@ -702,7 +727,7 @@ function filterSnapshotForStaff(
             sectionId !== undefined &&
             templateStudentIds.has(studentId) &&
             selectedSubjectIds.has(subjectId) &&
-            canAccessSubject(sectionId, subjectId)
+            canViewSubjectRecord(sectionId, subjectId)
           );
         })
       );
@@ -735,14 +760,15 @@ function filterSnapshotForStaff(
     teachers: teacher ? [teacher] : [],
     subjects: snapshot.subjects.filter(subject =>
       isFormTutor ||
-      assignedSubjectIds.has(positiveId(subject.id) || -1)
+      assignedSubjectIds.has(positiveId(subject.id) || -1) ||
+      reportSubjectIds.has(positiveId(subject.id) || -1)
     ),
     students,
     enrollments: snapshot.enrollments.filter(
       enrollment =>
         sectionIds.has(positiveId(enrollment.sectionId) || -1) &&
         studentIds.has(positiveId(enrollment.studentId) || -1) &&
-        canAccessSubject(enrollment.sectionId, enrollment.subjectId)
+        canViewSubjectRecord(enrollment.sectionId, enrollment.subjectId)
     ),
     scores: snapshot.scores.filter(
       score => {
@@ -752,7 +778,7 @@ function filterSnapshotForStaff(
           studentId !== undefined &&
           sectionId !== undefined &&
           studentIds.has(studentId) &&
-          canAccessSubject(sectionId, score.subjectId)
+          canViewSubjectRecord(sectionId, score.subjectId)
         );
       }
     ),
@@ -764,7 +790,7 @@ function filterSnapshotForStaff(
           studentId !== undefined &&
           sectionId !== undefined &&
           studentIds.has(studentId) &&
-          canAccessSubject(sectionId, record.subjectId)
+          canViewSubjectRecord(sectionId, record.subjectId)
         );
       }
     ),

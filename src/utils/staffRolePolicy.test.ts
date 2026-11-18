@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  canViewSubjectRecordInReport,
   getStaffVisibleToUser,
   findTeacherForUser,
   findNewInvalidTeacherSubjectAssignments,
@@ -128,4 +129,45 @@ test('subject applicability includes BOTH and rejects cross-level assignments', 
   assert.equal(isSubjectApplicableToSection({ applicableLevel: 'JUNIOR' }, junior), true);
   assert.equal(isSubjectApplicableToSection({ applicableLevel: 'SENIOR' }, junior), false);
   assert.equal(isSubjectApplicableToSection({ applicableLevel: 'SENIOR' }, senior), true);
+});
+
+test('subject teachers can view all applicable report subjects in their assigned classes', () => {
+  const junior = { levelType: 'JUNIOR' as const };
+
+  assert.equal(
+    canViewSubjectRecordInReport(
+      'SUBJECT_TEACHER',
+      junior,
+      { applicableLevel: 'JUNIOR' },
+      false
+    ),
+    true
+  );
+  assert.equal(
+    canViewSubjectRecordInReport(
+      'SUBJECT_TEACHER',
+      junior,
+      { applicableLevel: 'SENIOR' },
+      false
+    ),
+    false
+  );
+  assert.equal(
+    canViewSubjectRecordInReport(
+      'CLASS_TEACHER',
+      junior,
+      { applicableLevel: 'JUNIOR' },
+      false
+    ),
+    false
+  );
+  assert.equal(
+    canViewSubjectRecordInReport(
+      'CLASS_TEACHER',
+      junior,
+      { applicableLevel: 'JUNIOR' },
+      true
+    ),
+    true
+  );
 });

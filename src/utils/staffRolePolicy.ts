@@ -34,6 +34,17 @@ export function isSubjectApplicableToSection(
   return subject.applicableLevel === 'BOTH' || subject.applicableLevel === section.levelType;
 }
 
+export function canViewSubjectRecordInReport(
+  role: UserRole,
+  section: Pick<ClassSection, 'levelType'> | undefined,
+  subject: Pick<Subject, 'applicableLevel'> | undefined,
+  hasAssignedAccess: boolean
+): boolean {
+  if (!section || !subject) return false;
+  return hasAssignedAccess ||
+    (role === 'SUBJECT_TEACHER' && isSubjectApplicableToSection(subject, section));
+}
+
 function getInvalidTeacherSubjectAssignments(
   snapshot: TeacherAssignmentSnapshot | undefined
 ): TeacherSubjectAssignmentIssue[] {
