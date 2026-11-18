@@ -5,7 +5,7 @@ import type {
   TeacherSubjectAssignment,
   UserRole
 } from '../types/index';
-import { RELIGIOUS_STUDIES_SUBJECT_ID } from './subjectDisplay';
+import { RELIGIOUS_STUDIES_SUBJECT_ID } from './subjectDisplay.js';
 
 type TeacherAssignmentSnapshot = {
   teachers: readonly {
