@@ -126,6 +126,14 @@ export function canPrintOrDownload(role: UserRole): boolean {
   return role === 'SUPER_ADMIN' || role === 'PRINCIPAL' || role === 'HEAD_OF_SCHOOLS' || role === 'VICE_PRINCIPAL';
 }
 
+export function canPrintReportCards(role: UserRole, hasAssignedFormClass: boolean): boolean {
+  return role === 'SUPER_ADMIN' ||
+    role === 'PRINCIPAL' ||
+    role === 'HEAD_OF_SCHOOLS' ||
+    role === 'VICE_PRINCIPAL' ||
+    (role === 'CLASS_TEACHER' && hasAssignedFormClass);
+}
+
 /**
  * Checks whether a role can approve password reset requests and create teacher accounts.
  */
@@ -954,13 +962,16 @@ export function hasAllSubjectsClearance(role: UserRole): boolean {
  * subjects assigned to them in that specific class section.
  */
 export function getTeacherAssignedSubjectIdsForSection(
-  assignedSubjects: Array<{ sectionId: number; subjectId: number }> | undefined,
+  assignedSubjects: Array<{ sectionId: number | string; subjectId: number | string }> | undefined,
   sectionId: number
 ): number[] {
   if (!assignedSubjects || assignedSubjects.length === 0) return [];
-  return assignedSubjects
-    .filter(a => Number(a.sectionId) === Number(sectionId))
-    .map(a => Number(a.subjectId));
+  return Array.from(new Set(
+    assignedSubjects
+      .filter(a => Number(a.sectionId) === Number(sectionId))
+      .map(a => Number(a.subjectId))
+      .filter(id => Number.isSafeInteger(id) && id > 0)
+  ));
 }
 
 /**

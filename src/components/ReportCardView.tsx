@@ -21,10 +21,11 @@ import {
   sortSubjectsByReportOrder
 } from '../utils/reportCardCalculations';
 import {
-  canPrintOrDownload,
+  canPrintReportCards,
   resolveInstitutionLogoUrl,
   DEFAULT_INSTITUTION_LOGO_DATA_URI
 } from '../utils/rbacAndAuth';
+import { findTeacherForUser } from '../utils/staffRolePolicy';
 import {
   Printer,
   ChevronLeft,
@@ -54,6 +55,8 @@ export const ReportCardView: React.FC = () => {
   const {
     schoolProfile,
     currentRole,
+    currentUser,
+    teachers,
     currentSection,
     classSections,
     selectedSectionId,
@@ -88,6 +91,22 @@ export const ReportCardView: React.FC = () => {
   const [customRemarkEdits, setCustomRemarkEdits] = useState<Record<string, string>>({});
   const [testimonialModalStudent, setTestimonialModalStudent] = useState<Student | null>(null);
 
+  const activeTeacher = findTeacherForUser(teachers, currentUser);
+  const assignedFormSectionId = Number(
+    activeTeacher?.assignedSectionId ?? currentUser.assignedSectionId
+  );
+  const hasAssignedFormClass =
+    currentRole === 'CLASS_TEACHER' &&
+    Number.isSafeInteger(assignedFormSectionId) &&
+    assignedFormSectionId > 0;
+  const reportClassSections = useMemo(
+    () =>
+      hasAssignedFormClass
+        ? classSections.filter(section => Number(section.id) === assignedFormSectionId)
+        : classSections,
+    [assignedFormSectionId, classSections, hasAssignedFormClass]
+  );
+
   // Enabled custom report cards
   const enabledCustomTemplates = useMemo(
     () => customReportTemplates.filter(t => t.enabledInReportTab),
@@ -104,14 +123,16 @@ export const ReportCardView: React.FC = () => {
 
   // Filtered class sections when a custom report card is selected
   const visibleClassSections = useMemo(() => {
-    if (!activeCustomTemplate) return classSections;
+    if (!activeCustomTemplate) return reportClassSections;
     const allowedIds =
       activeCustomTemplate.sectionIds && activeCustomTemplate.sectionIds.length > 0
         ? activeCustomTemplate.sectionIds
         : [activeCustomTemplate.sectionId];
-    const filtered = classSections.filter(s => allowedIds.includes(s.id));
-    return filtered.length > 0 ? filtered : classSections;
-  }, [activeCustomTemplate, classSections]);
+    const filtered = reportClassSections.filter(s =>
+      allowedIds.some(id => Number(id) === Number(s.id))
+    );
+    return filtered.length > 0 ? filtered : reportClassSections;
+  }, [activeCustomTemplate, reportClassSections]);
 
   // Ensure selectedSectionId belongs to visibleClassSections when switching to a custom report card
   React.useEffect(() => {
@@ -123,7 +144,7 @@ export const ReportCardView: React.FC = () => {
     }
   }, [visibleClassSections, selectedSectionId, setSelectedSectionId]);
 
-  const isAllowedToPrint = canPrintOrDownload(currentRole);
+  const isAllowedToPrint = canPrintReportCards(currentRole, hasAssignedFormClass);
 
   const activeScaleBands = useMemo(
     () =>
@@ -1321,7 +1342,7 @@ export const ReportCardView: React.FC = () => {
               </p>
 
               {/* Inline Editable Comment Input & Comment Bank Auto-Generator (Hidden on Print) */}
-              {!isPrintPreview && (
+              {!isPrintPreview && currentRole !== 'SUBJECT_TEACHER' && (
                 <div className="print:hidden pt-2 border-t border-slate-100 space-y-1.5">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
                     <span className="text-slate-500 font-semibold">
@@ -1625,10 +1646,24 @@ export const ReportCardView: React.FC = () => {
             ) : (
               <div
                 data-testid="teacher-view-only-notice"
+                title={
+                  currentRole === 'SUBJECT_TEACHER'
+                    ? 'view only - subject teachers cannot print or download'
+                    : 'Only an assigned form tutor, super admin, or school management can print or download reports.'
+                }
+                aria-label={
+                  currentRole === 'SUBJECT_TEACHER'
+                    ? 'view only - subject teachers cannot print or download'
+                    : 'Report printing requires an assigned form tutor or school management role.'
+                }
                 className="flex items-center space-x-1.5 px-3.5 py-2 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-bold"
               >
                 <Lock className="w-4 h-4 text-amber-600 shrink-0" />
-                <span>View-Only Mode (Teachers cannot print or download)</span>
+                <span>
+                  {currentRole === 'SUBJECT_TEACHER'
+                    ? 'View only'
+                    : 'Form tutor assignment required to print'}
+                </span>
               </div>
             )}
           </div>

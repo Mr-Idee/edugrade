@@ -1886,7 +1886,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({ initialSubTa
                       Teacher Subject Clearance &amp; Class Assignment Matrix
                     </h4>
                     <p className="text-[11px] text-indigo-200">
-                      Assign specific subjects per class to Form Tutors &amp; Subject Teachers. Teachers can only view and edit scores for their assigned subjects.
+                      New staff have no score access until assigned. Assign each teacher a class and subject here; they can then view and edit scores for those assignments only.
                     </p>
                   </div>
                 </div>

@@ -24,7 +24,10 @@ import {
 } from '../src/utils/sqlExportGenerator.ts';
 import { mergeScopedCustomReportScores } from '../src/utils/customReportEngine.ts';
 import { mergeScopedScoreAuditLogs } from '../src/utils/scoreAudit.ts';
-import { preserveTeacherRemarksForSuperAdmin } from '../src/utils/studentCommentPolicy.ts';
+import {
+  preserveStudentCommentsForSubjectTeacher,
+  preserveTeacherRemarksForSuperAdmin
+} from '../src/utils/studentCommentPolicy.ts';
 import { canAssignStaffRole } from '../src/utils/staffRolePolicy.ts';
 import {
   isDocumentInHodScope,
@@ -571,6 +574,67 @@ function getHodDepartmentsForTeacher(
   );
 }
 
+function positiveId(value: unknown): number | undefined {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+}
+
+function assignmentKey(sectionId: number, subjectId: number): string {
+  return `${sectionId}:${subjectId}`;
+}
+
+function getTeacherAccessScope(
+  snapshot: FullDatabaseSnapshot,
+  identity: { username: string; record: EncryptedUserCredential }
+) {
+  const username = identity.username.trim().toLowerCase();
+  const teacher = snapshot.teachers.find(
+    item => (item.username || '').trim().toLowerCase() === username
+  );
+  const formSectionId = positiveId(teacher?.assignedSectionId);
+  const assignmentPairs = new Set<string>();
+  const assignedSubjectIds = new Set<number>();
+  const sectionIds = new Set<number>();
+
+  if (formSectionId !== undefined) sectionIds.add(formSectionId);
+  for (const assignment of teacher?.assignedSubjects || []) {
+    const sectionId = positiveId(assignment.sectionId);
+    const subjectId = positiveId(assignment.subjectId);
+    if (sectionId === undefined || subjectId === undefined) continue;
+    sectionIds.add(sectionId);
+    assignedSubjectIds.add(subjectId);
+    assignmentPairs.add(assignmentKey(sectionId, subjectId));
+  }
+
+  const isFormTutor = identity.record.role === 'CLASS_TEACHER' && formSectionId !== undefined;
+  const canAccessSubject = (sectionIdValue: unknown, subjectIdValue: unknown) => {
+    const sectionId = positiveId(sectionIdValue);
+    const subjectId = positiveId(subjectIdValue);
+    if (sectionId === undefined || subjectId === undefined) return false;
+    return (
+      (isFormTutor && sectionId === formSectionId) ||
+      assignmentPairs.has(assignmentKey(sectionId, subjectId))
+    );
+  };
+  const canEditSubject = (sectionIdValue: unknown, subjectIdValue: unknown) => {
+    const sectionId = positiveId(sectionIdValue);
+    const subjectId = positiveId(subjectIdValue);
+    return sectionId !== undefined &&
+      subjectId !== undefined &&
+      assignmentPairs.has(assignmentKey(sectionId, subjectId));
+  };
+
+  return {
+    teacher,
+    formSectionId,
+    isFormTutor,
+    sectionIds,
+    assignedSubjectIds,
+    canAccessSubject,
+    canEditSubject
+  };
+}
+
 function filterSnapshotForStaff(
   snapshot: FullDatabaseSnapshot,
   identity: { username: string; record: EncryptedUserCredential }
@@ -585,44 +649,57 @@ function filterSnapshotForStaff(
     };
   }
   if (isAdmin(identity.record.role)) return snapshot;
-  const teacher = snapshot.teachers.find(
-    item => (item.username || '').toLowerCase() === identity.username
-  );
+  const scope = getTeacherAccessScope(snapshot, identity);
+  const { teacher, sectionIds, assignedSubjectIds, canAccessSubject, isFormTutor } = scope;
   const hodDepartments = getHodDepartmentsForTeacher(snapshot, teacher, identity.username);
-  const sectionIds = new Set<number>();
-  const subjectIds = new Set<number>();
-  if (teacher?.assignedSectionId) sectionIds.add(teacher.assignedSectionId);
-  for (const assignment of teacher?.assignedSubjects || []) {
-    sectionIds.add(assignment.sectionId);
-    subjectIds.add(assignment.subjectId);
+  const students = snapshot.students.filter(student => sectionIds.has(positiveId(student.currentSectionId) || -1));
+  const studentIds = new Set(students.map(student => positiveId(student.id)).filter((id): id is number => id !== undefined));
+  const studentSectionIds = new Map<number, number>();
+  for (const student of students) {
+    const studentId = positiveId(student.id);
+    const sectionId = positiveId(student.currentSectionId);
+    if (studentId !== undefined && sectionId !== undefined) {
+      studentSectionIds.set(studentId, sectionId);
+    }
   }
-  const students = snapshot.students.filter(student => sectionIds.has(student.currentSectionId));
-  const studentIds = new Set(students.map(student => student.id));
-  const subjectFilter = (subjectId: number) => !subjectIds.size || subjectIds.has(subjectId);
-  const sections = snapshot.classSections.filter(section => sectionIds.has(section.id));
+  const sections = snapshot.classSections.filter(section =>
+    sectionIds.has(positiveId(section.id) || -1)
+  );
   const customReportTemplates = (snapshot.customReportTemplates || [])
     .filter(template =>
       (template.sectionIds?.length ? template.sectionIds : [template.sectionId])
-        .some(sectionId => sectionIds.has(sectionId))
+        .some(sectionId => sectionIds.has(positiveId(sectionId) || -1))
     )
     .map(template => {
       const templateSectionIds = new Set(
-        template.sectionIds?.length ? template.sectionIds : [template.sectionId]
+        (template.sectionIds?.length ? template.sectionIds : [template.sectionId])
+          .map(positiveId)
+          .filter((id): id is number => id !== undefined)
       );
       const templateStudentIds = new Set(
         students
-          .filter(student => templateSectionIds.has(student.currentSectionId))
-          .map(student => student.id)
+          .filter(student => templateSectionIds.has(positiveId(student.currentSectionId) || -1))
+          .map(student => positiveId(student.id))
+          .filter((id): id is number => id !== undefined)
       );
-      const selectedSubjectIds = new Set(template.selectedSubjectIds || []);
+      const selectedSubjectIds = new Set(
+        (template.selectedSubjectIds || [])
+          .map(positiveId)
+          .filter((id): id is number => id !== undefined)
+      );
       const studentCustomScores = Object.fromEntries(
         Object.entries(template.studentCustomScores || {}).filter(([key]) => {
           const match = /^(\d+)_(\d+)$/.exec(key);
+          const studentId = match ? Number(match[1]) : undefined;
+          const subjectId = match ? Number(match[2]) : undefined;
+          const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
           return Boolean(
-            match &&
-            templateStudentIds.has(Number(match[1])) &&
-            selectedSubjectIds.has(Number(match[2])) &&
-            subjectFilter(Number(match[2]))
+            studentId !== undefined &&
+            subjectId !== undefined &&
+            sectionId !== undefined &&
+            templateStudentIds.has(studentId) &&
+            selectedSubjectIds.has(subjectId) &&
+            canAccessSubject(sectionId, subjectId)
           );
         })
       );
@@ -632,7 +709,8 @@ function filterSnapshotForStaff(
     document =>
       document.teacherId === teacher?.id ||
       isDocumentInHodScope(document, hodDepartments) ||
-      (sectionIds.has(document.sectionId) && subjectFilter(document.subjectId))
+      (sectionIds.has(positiveId(document.sectionId) || -1) &&
+        canAccessSubject(document.sectionId, document.subjectId))
   );
   const displayedDocuments = visibleDocuments.map(document => ({
     ...document,
@@ -652,22 +730,45 @@ function filterSnapshotForStaff(
     ...snapshot,
     classSections: sections,
     teachers: teacher ? [teacher] : [],
-    subjects: snapshot.subjects.filter(subject => subjectFilter(subject.id)),
+    subjects: snapshot.subjects.filter(subject =>
+      isFormTutor ||
+      assignedSubjectIds.has(positiveId(subject.id) || -1)
+    ),
     students,
     enrollments: snapshot.enrollments.filter(
       enrollment =>
-        sectionIds.has(enrollment.sectionId) &&
-        studentIds.has(enrollment.studentId) &&
-        subjectFilter(enrollment.subjectId)
+        sectionIds.has(positiveId(enrollment.sectionId) || -1) &&
+        studentIds.has(positiveId(enrollment.studentId) || -1) &&
+        canAccessSubject(enrollment.sectionId, enrollment.subjectId)
     ),
     scores: snapshot.scores.filter(
-      score => studentIds.has(score.studentId) && subjectFilter(score.subjectId)
+      score => {
+        const studentId = positiveId(score.studentId);
+        const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
+        return (
+          studentId !== undefined &&
+          sectionId !== undefined &&
+          studentIds.has(studentId) &&
+          canAccessSubject(sectionId, score.subjectId)
+        );
+      }
     ),
     termSubjectRecords: snapshot.termSubjectRecords.filter(
-      record => studentIds.has(record.studentId) && subjectFilter(record.subjectId)
+      record => {
+        const studentId = positiveId(record.studentId);
+        const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
+        return (
+          studentId !== undefined &&
+          sectionId !== undefined &&
+          studentIds.has(studentId) &&
+          canAccessSubject(sectionId, record.subjectId)
+        );
+      }
     ),
     termSummaries: snapshot.termSummaries.filter(
-      summary => sectionIds.has(summary.sectionId) && studentIds.has(summary.studentId)
+      summary =>
+        sectionIds.has(positiveId(summary.sectionId) || -1) &&
+        studentIds.has(positiveId(summary.studentId) || -1)
     ),
     auditLogs: [],
     customReportTemplates,
@@ -679,7 +780,7 @@ function filterSnapshotForStaff(
     ),
     teacherDocumentUploads: displayedDocuments,
     studentTestimonials: (snapshot.studentTestimonials || []).filter(testimonial =>
-      studentIds.has(testimonial.studentId)
+      studentIds.has(positiveId(testimonial.studentId) || -1)
     ),
     academicDepartments: hodDepartments
   };
@@ -702,25 +803,31 @@ function mergeScopedSnapshot(
     };
   }
   if (isAdmin(identity.record.role)) return normalizeEnrollmentIds(submitted);
-  const teacher = current.teachers.find(
-    item => (item.username || '').toLowerCase() === identity.username
-  );
+  const scope = getTeacherAccessScope(current, identity);
+  const { teacher, sectionIds, canEditSubject } = scope;
   const hodDepartments = getHodDepartmentsForTeacher(current, teacher, identity.username);
-  const sectionIds = new Set<number>();
-  const subjectIds = new Set<number>();
-  if (teacher?.assignedSectionId) sectionIds.add(teacher.assignedSectionId);
-  for (const assignment of teacher?.assignedSubjects || []) {
-    sectionIds.add(assignment.sectionId);
-    subjectIds.add(assignment.subjectId);
+  const studentSectionIds = new Map<number, number>();
+  for (const student of current.students) {
+    const studentId = positiveId(student.id);
+    const sectionId = positiveId(student.currentSectionId);
+    if (
+      studentId !== undefined &&
+      sectionId !== undefined &&
+      sectionIds.has(sectionId)
+    ) {
+      studentSectionIds.set(studentId, sectionId);
+    }
   }
-  const studentIds = new Set(
-    current.students
-      .filter(student => sectionIds.has(student.currentSectionId))
-      .map(student => student.id)
-  );
-  const canEdit = (record: { studentId: number; subjectId: number }) =>
-    studentIds.has(record.studentId) &&
-    (!subjectIds.size || subjectIds.has(record.subjectId));
+  const studentIds = new Set(studentSectionIds.keys());
+  const canEdit = (record: { studentId: number; subjectId: number }) => {
+    const studentId = positiveId(record.studentId);
+    const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
+    return (
+      studentId !== undefined &&
+      sectionId !== undefined &&
+      canEditSubject(sectionId, record.subjectId)
+    );
+  };
   const mergeById = <T extends { id: number }>(
     existing: T[],
     incoming: T[],
@@ -734,31 +841,36 @@ function mergeScopedSnapshot(
     existing: T[],
     incoming: T[]
   ) => mergeById(existing as Array<T & { id: number }>, incoming as Array<T & { id: number }>, canEdit) as T[];
+  const submittedSummaries = identity.record.role === 'SUBJECT_TEACHER'
+    ? preserveStudentCommentsForSubjectTeacher(current.termSummaries, submitted.termSummaries)
+    : submitted.termSummaries;
   const merged: FullDatabaseSnapshot = {
     ...current,
     scores: mergeScopedRecords(current.scores, submitted.scores),
     termSubjectRecords: mergeScopedRecords(current.termSubjectRecords, submitted.termSubjectRecords),
     termSummaries: mergeById(
       current.termSummaries,
-      submitted.termSummaries,
-      summary => sectionIds.has(summary.sectionId) && studentIds.has(summary.studentId)
+      submittedSummaries,
+      summary =>
+        sectionIds.has(positiveId(summary.sectionId) || -1) &&
+        studentIds.has(positiveId(summary.studentId) || -1)
     ),
     auditLogs: mergeScopedScoreAuditLogs(
       current.auditLogs,
       submitted.auditLogs,
       log => {
-        const subjectIsAllowed = !subjectIds.size || (
-          log.subjectId !== undefined
-            ? subjectIds.has(log.subjectId)
-            : current.subjects.some(
-                subject => subject.name === log.subjectName && subjectIds.has(subject.id)
-              )
+        const studentId = positiveId(log.studentId);
+        const sectionId = studentId === undefined ? undefined : studentSectionIds.get(studentId);
+        const subjectId = positiveId(log.subjectId) ?? positiveId(
+          current.subjects.find(subject => subject.name === log.subjectName)?.id
         );
         return Boolean(
           teacher &&
-          log.studentId !== undefined &&
-          studentIds.has(log.studentId) &&
-          subjectIsAllowed &&
+          studentId !== undefined &&
+          sectionId !== undefined &&
+          studentIds.has(studentId) &&
+          subjectId !== undefined &&
+          canEditSubject(sectionId, subjectId) &&
           log.changedBy === teacher.fullName &&
           USER_ROLES.has(log.changedByRole)
         );
@@ -768,14 +880,21 @@ function mergeScopedSnapshot(
       const submittedTemplate = submitted.customReportTemplates?.find(item => item.id === template.id);
       if (!submittedTemplate) return template;
       const templateSectionIds = new Set(
-        template.sectionIds?.length ? template.sectionIds : [template.sectionId]
+        (template.sectionIds?.length ? template.sectionIds : [template.sectionId])
+          .map(positiveId)
+          .filter((id): id is number => id !== undefined)
       );
       const templateStudentIds = new Set(
         current.students
-          .filter(student => templateSectionIds.has(student.currentSectionId))
-          .map(student => student.id)
+          .filter(student => templateSectionIds.has(positiveId(student.currentSectionId) || -1))
+          .map(student => positiveId(student.id))
+          .filter((id): id is number => id !== undefined)
       );
-      const selectedSubjectIds = new Set(template.selectedSubjectIds || []);
+      const selectedSubjectIds = new Set(
+        (template.selectedSubjectIds || [])
+          .map(positiveId)
+          .filter((id): id is number => id !== undefined)
+      );
       return {
         ...template,
         studentCustomScores: mergeScopedCustomReportScores(

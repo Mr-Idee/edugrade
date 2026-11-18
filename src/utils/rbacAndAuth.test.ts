@@ -13,6 +13,7 @@ import {
   canAccessClassManagement,
   canAccessDatabaseConfig,
   canPrintOrDownload,
+  canPrintReportCards,
   canManageStaffAuth,
   getAssignableStaffRoles,
   canAssignStaffRole,
@@ -114,6 +115,13 @@ test('Strict Role Switching & Subject Clearance Compliance', () => {
   assert.deepEqual(getTeacherAssignedSubjectIdsForSection(assignments, 1), [2, 5]);
   assert.deepEqual(getTeacherAssignedSubjectIdsForSection(assignments, 2), [4]);
   assert.deepEqual(getTeacherAssignedSubjectIdsForSection(assignments, 3), []);
+  assert.deepEqual(
+    getTeacherAssignedSubjectIdsForSection(
+      [{ sectionId: '7', subjectId: '12' }],
+      7
+    ),
+    [12]
+  );
 });
 
 test('Staff role assignment follows the executive hierarchy', () => {
@@ -153,6 +161,7 @@ test('Roles & RBAC: Head of Schools shares executive permissions but not databas
   assert.equal(canAccessClassManagement('SUPER_ADMIN'), true);
   assert.equal(canAccessDatabaseConfig('SUPER_ADMIN'), true);
   assert.equal(canPrintOrDownload('SUPER_ADMIN'), true);
+  assert.equal(canPrintReportCards('SUPER_ADMIN', false), true);
   assert.equal(getAllowedTabsForRole('SUPER_ADMIN').includes('settings'), true);
   assert.equal(getAllowedTabsForRole('SUPER_ADMIN').includes('class_management'), true);
 
@@ -162,6 +171,7 @@ test('Roles & RBAC: Head of Schools shares executive permissions but not databas
     assert.equal(canAccessClassManagement(execRole), true);
     assert.equal(canAccessDatabaseConfig(execRole), false);
     assert.equal(canPrintOrDownload(execRole), true);
+    assert.equal(canPrintReportCards(execRole, false), true);
     assert.equal(canManageStaffAuth(execRole), true);
     assert.equal(getAllowedTabsForRole(execRole).includes('settings'), true);
     assert.equal(getAllowedTabsForRole(execRole).includes('class_management'), true);
@@ -173,12 +183,15 @@ test('Roles & RBAC: Head of Schools shares executive permissions but not databas
     assert.equal(canAccessClassManagement(teacherRole), false);
     assert.equal(canAccessDatabaseConfig(teacherRole), false);
     assert.equal(canPrintOrDownload(teacherRole), false);
+    assert.equal(canPrintReportCards(teacherRole, false), false);
     assert.equal(canManageStaffAuth(teacherRole), false);
     assert.equal(getAllowedTabsForRole(teacherRole).includes('settings'), false);
     assert.equal(getAllowedTabsForRole(teacherRole).includes('class_management'), false);
     assert.equal(getAllowedTabsForRole(teacherRole).includes('report'), true);
     assert.equal(getAllowedTabsForRole(teacherRole).includes('home'), true);
   }
+  assert.equal(canPrintReportCards('CLASS_TEACHER', true), true);
+  assert.equal(canPrintReportCards('SUBJECT_TEACHER', true), false);
 });
 
 test('Bulk CSV Import: Parses include=true/false and identifies unregistered/extra students for enrollment modal', () => {

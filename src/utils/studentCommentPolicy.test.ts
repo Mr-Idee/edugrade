@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { StudentTermSummary } from '../types/index';
 import {
   canAccessStudentComments,
+  preserveStudentCommentsForSubjectTeacher,
   preserveTeacherRemarksForSuperAdmin
 } from './studentCommentPolicy';
 
@@ -44,5 +45,31 @@ test('super-admin snapshot saves cannot replace or create teacher comments', () 
   const protectedSummaries = preserveTeacherRemarksForSuperAdmin(current, submitted);
 
   assert.equal(protectedSummaries[0].teacherRemark, 'Saved form tutor comment');
+  assert.equal(protectedSummaries[1].teacherRemark, '');
+});
+
+test('subject-teacher snapshot saves cannot change or create student comments', () => {
+  const current = [summary({
+    principalRemark: 'Saved principal comment',
+    teacherRemark: 'Saved form tutor comment'
+  })];
+  const submitted = [
+    summary({
+      principalRemark: 'Attempted principal comment',
+      teacherRemark: 'Attempted teacher comment'
+    }),
+    summary({
+      id: 2,
+      studentId: 8,
+      principalRemark: 'Attempted new principal comment',
+      teacherRemark: 'Attempted new teacher comment'
+    })
+  ];
+
+  const protectedSummaries = preserveStudentCommentsForSubjectTeacher(current, submitted);
+
+  assert.equal(protectedSummaries[0].principalRemark, 'Saved principal comment');
+  assert.equal(protectedSummaries[0].teacherRemark, 'Saved form tutor comment');
+  assert.equal(protectedSummaries[1].principalRemark, '');
   assert.equal(protectedSummaries[1].teacherRemark, '');
 });

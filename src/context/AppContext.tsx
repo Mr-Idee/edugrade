@@ -97,6 +97,8 @@ import {
   canAccessSystemBackup,
   canManageStaffAuth
 } from '../utils/rbacAndAuth';
+import { findTeacherForUser } from '../utils/staffRolePolicy';
+import { canAccessStudentComments } from '../utils/studentCommentPolicy';
 import {
   SystemBackupRecord,
   SystemBackupListItem,
@@ -1129,9 +1131,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const completeStaffLogin = useCallback((user: User, role: UserRole, sectionId?: number) => {
     const normalizedRole = normalizeUserRole(role);
     const uname = (user.username || generateTeacherUsername(user.fullName)).toLowerCase();
-    const matchedTeacher = teachers.find(
-      t => (t.username || generateTeacherUsername(t.fullName)).toLowerCase() === uname || t.id === user.id
-    );
+    const matchedTeacher = findTeacherForUser(teachers, { ...user, username: uname });
     const authenticatedUser: User = {
       ...user,
       username: uname,
@@ -1897,8 +1897,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const currentStaffRole =
       teacher.systemRole || (teacher.role === 'SUBJECT_TEACHER' ? 'SUBJECT_TEACHER' : 'CLASS_TEACHER');
     if (
-      teacher.id === currentUser.id ||
-      teacher.username.toLowerCase() === currentUser.username?.toLowerCase() ||
+      findTeacherForUser([teacher], currentUser) !== undefined ||
       !canAssignStaffRole(currentRole, currentStaffRole) ||
       !canAssignStaffRole(currentRole, systemRole)
     ) {
@@ -3345,6 +3344,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateRemarks = useCallback((studentId: number, principalRemark?: string, teacherRemark?: string) => {
     const student = students.find(item => item.id === studentId);
     const sectionId = student?.currentSectionId;
+    const activeTeacher = findTeacherForUser(teachers, currentUser);
+    const hasAssignedFormClass =
+      currentRole === 'CLASS_TEACHER' &&
+      sectionId !== undefined &&
+      Number(activeTeacher?.assignedSectionId) === Number(sectionId);
+    if (
+      currentRole === 'SUBJECT_TEACHER' ||
+      (teacherRemark !== undefined && !canAccessStudentComments(currentRole, hasAssignedFormClass))
+    ) {
+      return;
+    }
     if (
       teacherRemark !== undefined &&
       sectionId !== undefined &&
@@ -3378,7 +3388,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return prev;
     });
     setLastAutoSavedTime(new Date().toLocaleTimeString());
-  }, [currentTerm.id, recalculateSectionSummaries, students, termSummaries]);
+  }, [currentRole, currentTerm.id, currentUser, recalculateSectionSummaries, students, teachers, termSummaries]);
 
   // Comment Bank CRUD
   const addCommentBankItem = useCallback((item: Omit<CommentBankItem, 'id'>) => {

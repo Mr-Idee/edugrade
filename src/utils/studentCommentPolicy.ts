@@ -26,3 +26,26 @@ export function preserveTeacherRemarksForSuperAdmin(
     teacherRemark: existingRemarks.get(keyFor(summary)) || ''
   }));
 }
+
+export function preserveStudentCommentsForSubjectTeacher(
+  currentSummaries: StudentTermSummary[],
+  submittedSummaries: StudentTermSummary[]
+): StudentTermSummary[] {
+  const keyFor = (summary: StudentTermSummary) =>
+    `${summary.studentId}:${summary.sectionId}:${summary.termId}`;
+  const existingComments = new Map(
+    currentSummaries.map(summary => [
+      keyFor(summary),
+      { principalRemark: summary.principalRemark, teacherRemark: summary.teacherRemark }
+    ])
+  );
+
+  return submittedSummaries.map(summary => {
+    const comments = existingComments.get(keyFor(summary));
+    return {
+      ...summary,
+      principalRemark: comments?.principalRemark || '',
+      teacherRemark: comments?.teacherRemark || ''
+    };
+  });
+}

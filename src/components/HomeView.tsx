@@ -23,6 +23,7 @@ import {
   hasAllSubjectsClearance,
   getTeacherAssignedSubjectIdsForSection
 } from '../utils/rbacAndAuth';
+import { findTeacherForUser } from '../utils/staffRolePolicy';
 
 interface HomeViewProps {
   onSelectClassAndSubject: (sectionId: number, subjectId: number) => void;
@@ -55,11 +56,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const fullSubjectClearance = hasAllSubjectsClearance(currentRole);
 
   const activeTeacherAssignedSubjects = useMemo(() => {
-    const matchedTeacher = teachers.find(
-      t =>
-        t.id === currentUser.id ||
-        (currentUser.username && t.username?.toLowerCase() === currentUser.username.toLowerCase())
-    );
+    const matchedTeacher = findTeacherForUser(teachers, currentUser);
     return matchedTeacher?.assignedSubjects || currentUser.assignedSubjects || [];
   }, [teachers, currentUser]);
 
@@ -97,9 +94,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
       activeTeacherAssignedSubjects,
       modalClassSection.id
     );
-    const teacherSubjects = levelFiltered.filter(sub => assignedIds.includes(sub.id));
-    return teacherSubjects.length > 0 ? teacherSubjects : levelFiltered.slice(0, 1);
+    return levelFiltered.filter(sub => assignedIds.includes(Number(sub.id)));
   }, [modalClassSection, subjects, subjectSearch, fullSubjectClearance, activeTeacherAssignedSubjects]);
+  const hasSubjectAssignmentForModal =
+    fullSubjectClearance ||
+    (modalClassSection !== null &&
+      getTeacherAssignedSubjectIdsForSection(activeTeacherAssignedSubjects, modalClassSection.id).length > 0);
 
   const activeRoleMeta = ALLOWED_ROLES.find(r => r.role === currentRole);
 
@@ -316,11 +316,18 @@ export const HomeView: React.FC<HomeViewProps> = ({
           {filteredClasses.map(sec => {
             const classStudentCount = students.filter(st => st.currentSectionId === sec.id).length;
             const isSenior = sec.levelType === 'SENIOR';
-            const classSubjectCount = subjects.filter(sub =>
+            const levelSubjects = subjects.filter(sub =>
               isSenior
                 ? sub.applicableLevel === 'SENIOR' || sub.applicableLevel === 'BOTH'
                 : sub.applicableLevel === 'JUNIOR' || sub.applicableLevel === 'BOTH'
-            ).length;
+            );
+            const assignedSubjectIds = getTeacherAssignedSubjectIdsForSection(
+              activeTeacherAssignedSubjects,
+              sec.id
+            );
+            const classSubjectCount = fullSubjectClearance
+              ? levelSubjects.length
+              : levelSubjects.filter(subject => assignedSubjectIds.includes(Number(subject.id))).length;
 
             return (
               <button
@@ -355,7 +362,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-indigo-600 group-hover:text-indigo-800">
-                  <span>{classSubjectCount} Subjects Available</span>
+                  <span>
+                    {classSubjectCount} {fullSubjectClearance ? 'Subjects Available' : 'Assigned Subjects'}
+                  </span>
                   <span className="inline-flex items-center space-x-1">
                     <span>Select Subject</span>
                     <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
@@ -452,7 +461,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
               {modalApplicableSubjects.length === 0 && (
                 <div className="col-span-2 py-8 text-center text-xs text-slate-500">
-                  No subjects match &ldquo;{subjectSearch}&rdquo;.
+                  {hasSubjectAssignmentForModal
+                    ? <>No subjects match &ldquo;{subjectSearch}&rdquo;.</>
+                    : 'No score subjects are assigned to your account for this class. Ask an administrator to assign your subjects.'}
                 </div>
               )}
             </div>

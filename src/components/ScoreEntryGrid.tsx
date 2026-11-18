@@ -27,6 +27,7 @@ import {
   hasAllSubjectsClearance,
   getTeacherAssignedSubjectIdsForSection
 } from '../utils/rbacAndAuth';
+import { findTeacherForUser } from '../utils/staffRolePolicy';
 import {
   Search,
   CheckCircle2,
@@ -182,11 +183,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
 
   // Active teacher's assigned subjects across classes
   const activeTeacherAssignedSubjects = useMemo(() => {
-    const matchedTeacher = teachers.find(
-      t =>
-        t.id === currentUser.id ||
-        (currentUser.username && t.username?.toLowerCase() === currentUser.username.toLowerCase())
-    );
+    const matchedTeacher = findTeacherForUser(teachers, currentUser);
     return matchedTeacher?.assignedSubjects || currentUser.assignedSubjects || [];
   }, [teachers, currentUser]);
 
@@ -208,12 +205,14 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       activeTeacherAssignedSubjects,
       selectedSectionId
     );
-    const filteredForTeacher = levelSubjects.filter(sub => assignedIdsForClass.includes(sub.id));
-    return filteredForTeacher.length > 0 ? filteredForTeacher : levelSubjects.slice(0, 1);
+    return levelSubjects.filter(sub => assignedIdsForClass.includes(Number(sub.id)));
   }, [subjects, isSenior, fullSubjectClearance, activeTeacherAssignedSubjects, selectedSectionId]);
 
   const currentSubject = useMemo(() => {
-    return availableSubjects.find(s => s.id === selectedSubjectId) || availableSubjects[0] || subjects[0];
+    return availableSubjects.find(s => Number(s.id) === Number(selectedSubjectId)) ||
+      availableSubjects[0] ||
+      subjects[0] ||
+      { id: 0, name: '', code: '', category: 'CORE' as const };
   }, [availableSubjects, selectedSubjectId, subjects]);
 
   // Components for this section's level
@@ -325,7 +324,7 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
 
   // Students in current section
   const sectionStudents = useMemo(() => {
-    return students.filter(st => st.currentSectionId === selectedSectionId);
+    return students.filter(st => Number(st.currentSectionId) === Number(selectedSectionId));
   }, [students, selectedSectionId]);
 
   // Filtered by search and arranged according to active alphabetical / admission sort mode
@@ -794,6 +793,23 @@ export const ScoreEntryGrid: React.FC<ScoreEntryGridProps> = ({ onViewReportCard
       includedCount: includedStudents.length
     };
   }, [sectionStudents, scores, enrollments, currentSubject, selectedSectionId, maxCa, currentSection, ledgerMode, termSubjectRecords, currentTerm.id]);
+
+  if (ledgerMode !== 'custom_report' && availableSubjects.length === 0) {
+    return (
+      <div
+        role="status"
+        data-testid="no-assigned-score-subject"
+        className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-950"
+      >
+        <h2 className="font-black">No score subjects are available for this class.</h2>
+        <p className="mt-1">
+          {fullSubjectClearance
+            ? 'The curriculum has no subjects assigned to this class level.'
+            : 'Ask an administrator to assign your subjects for this class in Staff Assignment before entering scores.'}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0 space-y-6">

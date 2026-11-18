@@ -857,7 +857,7 @@ export const Navigation: React.FC<NavigationProps> = ({ activeTab, setActiveTab 
         <nav
           aria-label="Desktop PWA navigation"
           data-testid="desktop-pwa-bottom-nav"
-          className={`fixed bottom-4 left-1/2 z-40 hidden max-w-[calc(100vw-2rem)] -translate-x-1/2 items-end gap-2 rounded-2xl border border-slate-200/70 bg-white/75 px-4 py-2 shadow-xl backdrop-blur-md transition-all duration-300 ease-out min-[1024px]:flex ${
+          className={`fixed bottom-4 left-1/2 z-40 hidden max-w-[calc(100vw-2rem)] -translate-x-1/2 items-end gap-2 rounded-2xl border border-sky-300 bg-sky-100/95 px-4 py-2 shadow-xl backdrop-blur-md transition-all duration-300 ease-out min-[1024px]:flex ${
             isBottomNavigationVisible
               ? 'translate-y-0 opacity-100'
               : 'translate-y-24 pointer-events-none opacity-0'

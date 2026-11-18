@@ -19,6 +19,7 @@ import {
   getDepartmentForSubject
 } from '../utils/rbacAndAuth';
 import { canAccessStudentComments } from '../utils/studentCommentPolicy';
+import { findTeacherForUser } from '../utils/staffRolePolicy';
 import { calculateStudentCommentScores } from '../utils/studentCommentCalculations';
 import {
   resolveCurrentHodReviewer,
@@ -165,12 +166,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
 
   // Resolve the signed-in staff member for HOD materials and messages.
   const activeTeacher = useMemo(() => {
-    const matched = teachers.find(
-      t =>
-        t.id === currentUser.id ||
-        (t.username && currentUser.username && t.username.toLowerCase() === currentUser.username.toLowerCase())
-    );
-    return matched;
+    return findTeacherForUser(teachers, currentUser);
   }, [teachers, currentUser]);
 
   const cornerTeacher = activeTeacher;
@@ -383,13 +379,7 @@ export const TeachersCornerView: React.FC<TeachersCornerViewProps> = ({
   }, [currentUser.fullName, currentUser.username]);
 
   const profileTeacher = useMemo(
-    () =>
-      teachers.find(
-        teacher =>
-          teacher.id === currentUser.id ||
-          (teacher.username && currentUser.username &&
-            teacher.username.toLowerCase() === currentUser.username.toLowerCase())
-      ),
+    () => findTeacherForUser(teachers, currentUser),
     [teachers, currentUser.id, currentUser.username]
   );
   const profileHodInfo = useMemo(
